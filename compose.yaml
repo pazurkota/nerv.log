@@ -1,0 +1,7 @@
+﻿services:
+  nerv.log:
+    image: nerv.log
+    build:
+      context: .
+      dockerfile: nerv.log/Dockerfile
+
