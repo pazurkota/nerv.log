@@ -5,7 +5,7 @@ option csharp_namespace = "nerv.log";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";
 
-service LogIngestionService {
+service LogIngestion {
   rpc StreamLogs(stream LogRequest) returns (IngestionResponse);
 }
 
