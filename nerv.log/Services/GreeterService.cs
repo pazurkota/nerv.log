@@ -1,5 +1,4 @@
 using Grpc.Core;
-using nerv.log;
 
 namespace nerv.log.Services;
 
