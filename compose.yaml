@@ -1,6 +1,7 @@
 ﻿services:
   nerv.log:
     image: nerv.log
+    pull_policy: build
     build:
       context: .
       dockerfile: nerv.log/Dockerfile
@@ -23,7 +24,7 @@
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
 
 volumes:
   postgres_data:
