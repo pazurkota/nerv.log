@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using nerv.log.Database;
 using nerv.log.Model;
 using nerv.log.Services;
+using nerv.log.Workers;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,10 +13,18 @@ builder.Services.AddSingleton(Channel.CreateBounded<LogEntry>(new BoundedChannel
 {
     FullMode = BoundedChannelFullMode.Wait
 }));
-builder.Services.AddDbContext<AppDbContext>(options =>
+builder.Services.AddDbContextFactory<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+builder.Services.AddHostedService<LogStorageWorker>();
 
 var app = builder.Build();
+
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
+    await using var context = await db.CreateDbContextAsync();
+    await context.Database.MigrateAsync();
+}
 
 // Configure the HTTP request pipeline.
 app.MapGrpcService<LogIngestionService>();

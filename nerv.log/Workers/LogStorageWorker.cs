@@ -51,6 +51,7 @@ public class LogStorageWorker
         {
             await using var context = await contextFactory.CreateDbContextAsync();
             await context.Logs.AddRangeAsync(batch);
+            await context.SaveChangesAsync();
 
             logger.LogInformation("worker: Package successfully saved.");
         }
