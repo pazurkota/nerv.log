@@ -8,7 +8,9 @@ namespace nerv.log.Agent;
 public class TestAgent
     (string serverAddress, int delayMs, Random random)
 {
-    private readonly string[] _levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"];
+    private readonly LogLevel[] _levels = 
+        [LogLevel.Debug, LogLevel.Info, LogLevel.Warning, LogLevel.Error, LogLevel.Critical];
+    
     private readonly string[] _services = ["Auth.API", "Payment.Gateway", "Inventory.Worker"];
     private readonly string[] _messages =
     [
@@ -33,7 +35,13 @@ public class TestAgent
 
             while (!cancellationToken.IsCancellationRequested)
             {
-                //@TODO: Create random log stream to nerv.log
+                var logRequest = GenerateRandomLog();
+
+                await streamingCall.RequestStream.WriteAsync(logRequest, cancellationToken);
+                Console.WriteLine($"[{DateTime.Now:HH:mm:ss zz}] -> " +
+                                  $"{logRequest.Level} | {logRequest.ServiceName} | {logRequest.Message}");
+
+                await Task.Delay(delayMs, cancellationToken);
             }
         }
         catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled ||
@@ -49,10 +57,12 @@ public class TestAgent
 
     private LogRequest GenerateRandomLog()
     {
-        // @TODO: Finish this function
         return new LogRequest
         {
             Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
+            Level = _levels[random.Next(_levels.Length)],
+            ServiceName = _services[random.Next(_levels.Length)],
+            Message = _messages[random.Next(_messages.Length)]
         };
     }
 }

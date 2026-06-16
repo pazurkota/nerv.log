@@ -22,7 +22,7 @@ enum LogLevel {
 message LogRequest {
   google.protobuf.Timestamp timestamp = 1;
   
-  string level = 2;
+  LogLevel level = 2;
   
   string service_name = 3;
   
