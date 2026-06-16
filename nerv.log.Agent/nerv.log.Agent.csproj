@@ -11,4 +11,8 @@
       <PackageReference Include="Grpc.AspNetCore" Version="2.80.0" />
     </ItemGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\nerv.log\nerv.log.csproj" />
+    </ItemGroup>
+
 </Project>
