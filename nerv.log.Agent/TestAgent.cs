@@ -61,7 +61,7 @@ public class TestAgent
         {
             Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),
             Level = _levels[random.Next(_levels.Length)],
-            ServiceName = _services[random.Next(_levels.Length)],
+            ServiceName = _services[random.Next(_services.Length)],
             Message = _messages[random.Next(_messages.Length)]
         };
     }
