@@ -2,7 +2,7 @@
 
 using nerv.log.Agent;
 
-Console.WriteLine("nerv.log CLI test agent");
+Console.WriteLine("nerv.log.Server CLI test agent");
 
 // default url address from docker
 string serverAddr = args.Length > 0 ? args[0] : "http://localhost:8080"; 
