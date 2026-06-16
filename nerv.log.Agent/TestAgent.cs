@@ -30,19 +30,27 @@ public class TestAgent
 
         try
         {
-            using var streamingCall = client.StreamLogs(cancellationToken: cancellationToken);
+            using var streamingCall = client.StreamLogs();
             Console.WriteLine($"agent: Connected. Starting steaming data with {delayMs}ms delay.");
 
-            while (!cancellationToken.IsCancellationRequested)
+            try
             {
-                var logRequest = GenerateRandomLog();
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var logRequest = GenerateRandomLog();
 
-                await streamingCall.RequestStream.WriteAsync(logRequest, cancellationToken);
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss zz}] -> " +
-                                  $"{logRequest.Level} | {logRequest.ServiceName} | {logRequest.Message}");
+                    await streamingCall.RequestStream.WriteAsync(logRequest, cancellationToken);
+                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss zz}] -> " +
+                                      $"{logRequest.Level} | {logRequest.ServiceName} | {logRequest.Message}");
 
-                await Task.Delay(delayMs, cancellationToken);
+                    await Task.Delay(delayMs, cancellationToken);
+                }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+
+            await streamingCall.RequestStream.CompleteAsync();
+            var response = await streamingCall.ResponseAsync;
+            Console.WriteLine($"agent: Stream completed. Server processed {response.LogsProcessed} logs.");
         }
         catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled ||
                                       cancellationToken.IsCancellationRequested)
