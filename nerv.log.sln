@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "nerv.log", "nerv.log\nerv.log.csproj", "{21AC9C61-2C10-4AA1-BA9B-6534AF4AD0AB}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "nerv.log.Server", "nerv.log.Server\nerv.log.Server.csproj", "{21AC9C61-2C10-4AA1-BA9B-6534AF4AD0AB}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{3F3535A0-4436-416D-97E0-4012AACEB466}"
 	ProjectSection(SolutionItems) = preProject

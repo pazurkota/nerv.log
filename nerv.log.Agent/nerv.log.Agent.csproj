@@ -12,7 +12,7 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\nerv.log\nerv.log.csproj" />
+      <ProjectReference Include="..\nerv.log.Server\nerv.log.Server.csproj" />
     </ItemGroup>
 
 </Project>

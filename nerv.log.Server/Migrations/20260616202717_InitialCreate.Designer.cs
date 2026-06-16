@@ -25,7 +25,7 @@ namespace nerv.log.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("nerv.log.Model.LogEntry", b =>
+            modelBuilder.Entity("nerv.log.Server.Model.LogEntry", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
