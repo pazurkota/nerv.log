@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using nerv.log.Database;
 using nerv.log.Model;
+using nerv.log.Services;
 using nerv.log.Workers;
 
 namespace nerv.log.Tests.Workers;
@@ -18,13 +19,13 @@ public class LogStorageWorkerTest
         _mockContextFactory = new Mock<IDbContextFactory<AppDbContext>>();
     }
 
-    private AppDbContext CreateInMemoryContext() =>
+    private AppDbContext CreateInMemoryContext(string? dbName = null) =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .UseInMemoryDatabase(dbName ?? Guid.NewGuid().ToString())
             .Options);
 
     private LogStorageWorker CreateWorker(Channel<LogEntry> channel) =>
-        new(channel, _mockContextFactory.Object, _mockLogger.Object);
+        new(channel, _mockContextFactory.Object, _mockLogger.Object, new EnvService());
 
     private static IEnumerable<LogEntry> CreateLogs(int count) =>
         Enumerable.Range(1, count)
@@ -37,13 +38,29 @@ public class LogStorageWorkerTest
         channel.Writer.Complete();
     }
 
+    // Polls condition every 50 ms until it returns true or the timeout expires.
+    // ExecuteAsync runs an orchestration loop that never exits on its own, so tests
+    // cannot await ExecuteTask — they must poll for the expected side effect, then
+    // call StopAsync to shut down cleanly.
+    private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition()) return;
+            await Task.Delay(50);
+        }
+        throw new TimeoutException("Condition was not met within the allowed timeout.");
+    }
+
     [Fact]
-    public async Task ExecuteAsync_WithSmallBatch_FlushesOnceWhenChannelCompletes()
+    public async Task ExecuteAsync_WithSmallBatch_SavesAllLogsToDatabase()
     {
         // Arrange
+        var dbName = Guid.NewGuid().ToString();
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
         await WriteAndComplete(channel, CreateLogs(5));
@@ -51,10 +68,16 @@ public class LogStorageWorkerTest
 
         // Act
         await worker.StartAsync(CancellationToken.None);
-        await worker.ExecuteTask!;
+        await WaitUntilAsync(async () =>
+        {
+            await using var ctx = CreateInMemoryContext(dbName);
+            return await ctx.Logs.CountAsync() == 5;
+        });
+        await worker.StopAsync(CancellationToken.None);
 
         // Assert
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Once);
+        await using var finalCtx = CreateInMemoryContext(dbName);
+        Assert.Equal(5, await finalCtx.Logs.CountAsync());
     }
 
     [Fact]
@@ -65,75 +88,95 @@ public class LogStorageWorkerTest
         channel.Writer.Complete();
         var worker = CreateWorker(channel);
 
-        // Act
+        // Act — channel is already empty; give workers time to observe it and exit
         await worker.StartAsync(CancellationToken.None);
-        await worker.ExecuteTask!;
+        await WaitUntilAsync(() => Task.FromResult(channel.Reader.Completion.IsCompleted && channel.Reader.Count == 0));
+        await Task.Delay(200);
+        await worker.StopAsync(CancellationToken.None);
 
         // Assert
         _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenBatchSizeReached_FlushesImmediately()
+    public async Task ExecuteAsync_WhenBatchSizeExceeded_SavesAllLogsToDatabase()
     {
         // Arrange
+        var dbName = Guid.NewGuid().ToString();
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
-        // 1500 entries: flush at 1000, then flush remaining 500 when channel completes
         await WriteAndComplete(channel, CreateLogs(1500));
         var worker = CreateWorker(channel);
 
         // Act
         await worker.StartAsync(CancellationToken.None);
-        await worker.ExecuteTask!;
+        await WaitUntilAsync(async () =>
+        {
+            await using var ctx = CreateInMemoryContext(dbName);
+            return await ctx.Logs.CountAsync() == 1500;
+        });
+        await worker.StopAsync(CancellationToken.None);
 
         // Assert
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        await using var finalCtx = CreateInMemoryContext(dbName);
+        Assert.Equal(1500, await finalCtx.Logs.CountAsync());
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithExactlyBatchSize_FlushesOnce()
+    public async Task ExecuteAsync_WithExactlyBatchSize_SavesAllLogsToDatabase()
     {
         // Arrange
+        var dbName = Guid.NewGuid().ToString();
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
-        // Exactly 1000 entries: batch flush happens in the inner while, batch is empty after
         await WriteAndComplete(channel, CreateLogs(1000));
         var worker = CreateWorker(channel);
 
         // Act
         await worker.StartAsync(CancellationToken.None);
-        await worker.ExecuteTask!;
+        await WaitUntilAsync(async () =>
+        {
+            await using var ctx = CreateInMemoryContext(dbName);
+            return await ctx.Logs.CountAsync() == 1000;
+        });
+        await worker.StopAsync(CancellationToken.None);
 
         // Assert
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Once);
+        await using var finalCtx = CreateInMemoryContext(dbName);
+        Assert.Equal(1000, await finalCtx.Logs.CountAsync());
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithMultiplesOfBatchSize_FlushesCorrectNumberOfTimes()
+    public async Task ExecuteAsync_WithLargeDataset_SavesAllLogsToDatabase()
     {
         // Arrange
+        var dbName = Guid.NewGuid().ToString();
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
-        // 3000 entries: flush at 1000, 2000, and 3000 (when channel completes)
         await WriteAndComplete(channel, CreateLogs(3000));
         var worker = CreateWorker(channel);
 
         // Act
         await worker.StartAsync(CancellationToken.None);
-        await worker.ExecuteTask!;
+        await WaitUntilAsync(async () =>
+        {
+            await using var ctx = CreateInMemoryContext(dbName);
+            return await ctx.Logs.CountAsync() == 3000;
+        });
+        await worker.StopAsync(CancellationToken.None);
 
         // Assert
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
+        await using var finalCtx = CreateInMemoryContext(dbName);
+        Assert.Equal(3000, await finalCtx.Logs.CountAsync());
     }
 
     [Fact]
@@ -147,15 +190,24 @@ public class LogStorageWorkerTest
         await worker.StartAsync(CancellationToken.None);
         await worker.StopAsync(CancellationToken.None);
 
+        // Worker threads are started via Task.Run (fire-and-forget), so StopAsync may return
+        // before they finish logging the cancellation warning — wait for the log to appear.
+        await WaitUntilAsync(() => Task.FromResult(
+            _mockLogger.Invocations.Any(i =>
+                i.Arguments.OfType<Microsoft.Extensions.Logging.LogLevel>()
+                    .Any(l => l == Microsoft.Extensions.Logging.LogLevel.Warning)
+                && i.Arguments[2]?.ToString()?.Contains("has been stopped") == true)),
+            TimeSpan.FromSeconds(5));
+
         // Assert
         _mockLogger.Verify(
             x => x.Log(
                 Microsoft.Extensions.Logging.LogLevel.Warning,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("stopping due to cancellation")),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("has been stopped")),
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
     }
 
     [Fact]
@@ -170,9 +222,11 @@ public class LogStorageWorkerTest
         await WriteAndComplete(channel, CreateLogs(3));
         var worker = CreateWorker(channel);
 
-        // Act
+        // Act — wait until channel is drained and error handling finishes
         await worker.StartAsync(CancellationToken.None);
-        await worker.ExecuteTask!;
+        await WaitUntilAsync(() => Task.FromResult(channel.Reader.Count == 0));
+        await Task.Delay(200);
+        await worker.StopAsync(CancellationToken.None);
 
         // Assert
         _mockLogger.Verify(
@@ -182,34 +236,39 @@ public class LogStorageWorkerTest
                 It.IsAny<It.IsAnyType>(),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenFlushing_LogsStartAndSuccessMessages()
+    public async Task ExecuteAsync_WhenFlushing_LogsInformationMessages()
     {
         // Arrange
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext());
 
         var channel = Channel.CreateUnbounded<LogEntry>();
         await WriteAndComplete(channel, CreateLogs(3));
         var worker = CreateWorker(channel);
 
-        // Act
+        // Act — wait until workers have flushed and logged success
         await worker.StartAsync(CancellationToken.None);
-        await worker.ExecuteTask!;
+        await WaitUntilAsync(() => Task.FromResult(
+            _mockLogger.Invocations.Any(i =>
+                i.Arguments.OfType<Microsoft.Extensions.Logging.LogLevel>()
+                    .Any(l => l == Microsoft.Extensions.Logging.LogLevel.Information)
+                && i.Arguments[2]?.ToString()?.Contains("Package successfully saved") == true)));
+        await worker.StopAsync(CancellationToken.None);
 
-        // Assert – one "Saving..." and one "Package successfully saved." per flush
+        // Assert
         _mockLogger.Verify(
             x => x.Log(
                 Microsoft.Extensions.Logging.LogLevel.Information,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Saving mass package")),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Saving package with")),
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
 
         _mockLogger.Verify(
             x => x.Log(
@@ -218,34 +277,28 @@ public class LogStorageWorkerTest
                 It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Package successfully saved")),
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenDbThrows_BatchIsClearedBeforeNextFlush()
+    public async Task ExecuteAsync_WhenDbThrows_BatchIsClearedAndWorkerCompletesGracefully()
     {
-        // Arrange – first call throws, subsequent calls succeed; both batches are separate
-        var callCount = 0;
+        // Arrange
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() =>
-            {
-                callCount++;
-                if (callCount == 1) throw new InvalidOperationException("First flush fails");
-                return CreateInMemoryContext();
-            });
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
-        // 1500 entries: first flush at 1000 (throws), second flush at 500 remaining (succeeds)
         await WriteAndComplete(channel, CreateLogs(1500));
         var worker = CreateWorker(channel);
 
-        // Act
+        // Act — wait for channel to drain (workers read, attempted flushes, caught errors)
         await worker.StartAsync(CancellationToken.None);
-        await worker.ExecuteTask!;
+        await WaitUntilAsync(() => Task.FromResult(channel.Reader.Count == 0));
+        await Task.Delay(200);
+        await worker.StopAsync(CancellationToken.None);
 
-        // Assert – both flushes were attempted; second one succeeded despite first failing
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        // Assert — errors were logged; worker finished without deadlock
         _mockLogger.Verify(
             x => x.Log(
                 Microsoft.Extensions.Logging.LogLevel.Error,
@@ -253,6 +306,6 @@ public class LogStorageWorkerTest
                 It.IsAny<It.IsAnyType>(),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
     }
 }

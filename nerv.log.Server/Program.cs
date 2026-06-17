@@ -13,6 +13,7 @@ builder.Services.AddSingleton(Channel.CreateBounded<LogEntry>(new BoundedChannel
 {
     FullMode = BoundedChannelFullMode.Wait
 }));
+builder.Services.AddSingleton<EnvService>();
 builder.Services.AddDbContextFactory<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddHostedService<LogStorageWorker>();
