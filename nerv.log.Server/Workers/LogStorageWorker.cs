@@ -13,6 +13,8 @@ public class LogStorageWorker
     private const int BatchSize = 1000;
     private const int WorkersCount = 4; // temp only
     
+    // scaling thresholds
+    
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("worker: Multi-thread saving is available. Workers count: {count}", WorkersCount);
