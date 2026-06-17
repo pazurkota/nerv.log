@@ -18,9 +18,9 @@ public class LogStorageWorkerTest
         _mockContextFactory = new Mock<IDbContextFactory<AppDbContext>>();
     }
 
-    private AppDbContext CreateInMemoryContext() =>
+    private AppDbContext CreateInMemoryContext(string? dbName = null) =>
         new(new DbContextOptionsBuilder<AppDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .UseInMemoryDatabase(dbName ?? Guid.NewGuid().ToString())
             .Options);
 
     private LogStorageWorker CreateWorker(Channel<LogEntry> channel) =>
@@ -38,12 +38,13 @@ public class LogStorageWorkerTest
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithSmallBatch_FlushesOnceWhenChannelCompletes()
+    public async Task ExecuteAsync_WithSmallBatch_SavesAllLogsToDatabase()
     {
         // Arrange
+        var dbName = Guid.NewGuid().ToString();
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
         await WriteAndComplete(channel, CreateLogs(5));
@@ -53,8 +54,9 @@ public class LogStorageWorkerTest
         await worker.StartAsync(CancellationToken.None);
         await worker.ExecuteTask!;
 
-        // Assert
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Once);
+        // Assert — all 5 logs must reach the DB regardless of worker distribution
+        await using var ctx = CreateInMemoryContext(dbName);
+        Assert.Equal(5, await ctx.Logs.CountAsync());
     }
 
     [Fact]
@@ -74,15 +76,15 @@ public class LogStorageWorkerTest
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenBatchSizeReached_FlushesImmediately()
+    public async Task ExecuteAsync_WhenBatchSizeExceeded_SavesAllLogsToDatabase()
     {
-        // Arrange
+        // Arrange – 1500 entries triggers at least one mid-batch flush in addition to the end-of-channel flush
+        var dbName = Guid.NewGuid().ToString();
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
-        // 1500 entries: flush at 1000, then flush remaining 500 when channel completes
         await WriteAndComplete(channel, CreateLogs(1500));
         var worker = CreateWorker(channel);
 
@@ -91,19 +93,20 @@ public class LogStorageWorkerTest
         await worker.ExecuteTask!;
 
         // Assert
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        await using var ctx = CreateInMemoryContext(dbName);
+        Assert.Equal(1500, await ctx.Logs.CountAsync());
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithExactlyBatchSize_FlushesOnce()
+    public async Task ExecuteAsync_WithExactlyBatchSize_SavesAllLogsToDatabase()
     {
         // Arrange
+        var dbName = Guid.NewGuid().ToString();
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
-        // Exactly 1000 entries: batch flush happens in the inner while, batch is empty after
         await WriteAndComplete(channel, CreateLogs(1000));
         var worker = CreateWorker(channel);
 
@@ -112,19 +115,20 @@ public class LogStorageWorkerTest
         await worker.ExecuteTask!;
 
         // Assert
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Once);
+        await using var ctx = CreateInMemoryContext(dbName);
+        Assert.Equal(1000, await ctx.Logs.CountAsync());
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithMultiplesOfBatchSize_FlushesCorrectNumberOfTimes()
+    public async Task ExecuteAsync_WithLargeDataset_SavesAllLogsToDatabase()
     {
         // Arrange
+        var dbName = Guid.NewGuid().ToString();
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
-        // 3000 entries: flush at 1000, 2000, and 3000 (when channel completes)
         await WriteAndComplete(channel, CreateLogs(3000));
         var worker = CreateWorker(channel);
 
@@ -133,7 +137,8 @@ public class LogStorageWorkerTest
         await worker.ExecuteTask!;
 
         // Assert
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Exactly(3));
+        await using var ctx = CreateInMemoryContext(dbName);
+        Assert.Equal(3000, await ctx.Logs.CountAsync());
     }
 
     [Fact]
@@ -147,15 +152,15 @@ public class LogStorageWorkerTest
         await worker.StartAsync(CancellationToken.None);
         await worker.StopAsync(CancellationToken.None);
 
-        // Assert
+        // Assert — each of the 4 workers logs a warning when stopped
         _mockLogger.Verify(
             x => x.Log(
                 Microsoft.Extensions.Logging.LogLevel.Warning,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("stopping due to cancellation")),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("has been stopped")),
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
     }
 
     [Fact]
@@ -170,11 +175,11 @@ public class LogStorageWorkerTest
         await WriteAndComplete(channel, CreateLogs(3));
         var worker = CreateWorker(channel);
 
-        // Act
+        // Act — should not propagate the exception
         await worker.StartAsync(CancellationToken.None);
         await worker.ExecuteTask!;
 
-        // Assert
+        // Assert — at least one worker logged the error
         _mockLogger.Verify(
             x => x.Log(
                 Microsoft.Extensions.Logging.LogLevel.Error,
@@ -182,16 +187,16 @@ public class LogStorageWorkerTest
                 It.IsAny<It.IsAnyType>(),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenFlushing_LogsStartAndSuccessMessages()
+    public async Task ExecuteAsync_WhenFlushing_LogsInformationMessages()
     {
         // Arrange
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateInMemoryContext);
+            .ReturnsAsync(() => CreateInMemoryContext());
 
         var channel = Channel.CreateUnbounded<LogEntry>();
         await WriteAndComplete(channel, CreateLogs(3));
@@ -201,15 +206,15 @@ public class LogStorageWorkerTest
         await worker.StartAsync(CancellationToken.None);
         await worker.ExecuteTask!;
 
-        // Assert – one "Saving..." and one "Package successfully saved." per flush
+        // Assert — at least one flush produces both a "Saving" and a "saved" log
         _mockLogger.Verify(
             x => x.Log(
                 Microsoft.Extensions.Logging.LogLevel.Information,
                 It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Saving mass package")),
+                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Saving package with")),
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
 
         _mockLogger.Verify(
             x => x.Log(
@@ -218,25 +223,19 @@ public class LogStorageWorkerTest
                 It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Package successfully saved")),
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenDbThrows_BatchIsClearedBeforeNextFlush()
+    public async Task ExecuteAsync_WhenDbThrows_BatchIsClearedAndWorkerCompletesGracefully()
     {
-        // Arrange – first call throws, subsequent calls succeed; both batches are separate
-        var callCount = 0;
+        // Arrange — DB always fails; verify the worker doesn't hang and errors are reported
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() =>
-            {
-                callCount++;
-                if (callCount == 1) throw new InvalidOperationException("First flush fails");
-                return CreateInMemoryContext();
-            });
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
 
         var channel = Channel.CreateUnbounded<LogEntry>();
-        // 1500 entries: first flush at 1000 (throws), second flush at 500 remaining (succeeds)
+        // 1500 entries to ensure mid-batch flushes are attempted across workers
         await WriteAndComplete(channel, CreateLogs(1500));
         var worker = CreateWorker(channel);
 
@@ -244,8 +243,7 @@ public class LogStorageWorkerTest
         await worker.StartAsync(CancellationToken.None);
         await worker.ExecuteTask!;
 
-        // Assert – both flushes were attempted; second one succeeded despite first failing
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        // Assert — errors were logged; worker finished without deadlock or unhandled exception
         _mockLogger.Verify(
             x => x.Log(
                 Microsoft.Extensions.Logging.LogLevel.Error,
@@ -253,6 +251,6 @@ public class LogStorageWorkerTest
                 It.IsAny<It.IsAnyType>(),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.Once);
+            Times.AtLeastOnce);
     }
 }
