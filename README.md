@@ -7,7 +7,7 @@ A high-performance, distributed log ingestion and analytics pipeline built with 
 ## Requirements
 
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8)
-- [Docker](https://docs.docker.com/get-docker/) with Docker Compose
+- [Docker](https://docs.docker.com/get-docker/) (required by Aspire to run containers)
 
 ---
 
@@ -15,40 +15,33 @@ A high-performance, distributed log ingestion and analytics pipeline built with 
 
 ```
 nerv.log/
+├── nerv.log.Aspire/     # .NET Aspire AppHost — orchestrates the server container and PostgreSQL
 ├── nerv.log.Server/     # ASP.NET Core gRPC server — receives logs and persists them to PostgreSQL
 │   └── Protos/          # Protobuf service definition (log_service.proto)
 ├── nerv.log.Agent/      # CLI test agent — generates and streams random log entries to the server
-├── nerv.log.Tests/      # xUnit unit tests for server services and workers
-└── compose.yaml         # Docker Compose — server + PostgreSQL
+└── nerv.log.Tests/      # xUnit unit tests for server services and workers
 ```
 
 The server exposes a single gRPC streaming endpoint (`LogIngestion.StreamLogs`). Incoming log entries are queued in an in-memory `Channel<LogEntry>` and flushed to PostgreSQL in batches of 1000 by `LogStorageWorker`.
 
 ---
 
-## Running with Docker
+## Running with .NET Aspire
 
-Copy the example environment file and fill in your credentials:
+.NET Aspire is the recommended way to run the project locally. It orchestrates the server container and PostgreSQL automatically, and provides a Dashboard for observing logs, traces, and resource health.
 
-```bash
-cp .env.example .env   # or create .env manually
-```
-
-Required variables in `.env`:
-
-```env
-DB_USER=postgres
-DB_PASSWORD=your_password
-DB_NAME=nerv_log_db
-```
-
-Start the server and database:
+Start the AppHost from the solution root:
 
 ```bash
-docker compose up --build
+dotnet run --project nerv.log.Aspire
 ```
 
-The gRPC server will be available on `http://localhost:8080`. Database migrations are applied automatically on startup.
+Aspire prints the Dashboard URL on startup (e.g. `https://localhost:17093`). Open it in the browser to monitor running services.
+
+The gRPC server is available at **`http://localhost:8080`**. Database migrations are applied automatically on first startup.
+
+> [!NOTE] 
+> The Aspire Dashboard also exposes an OTLP telemetry endpoint (e.g. `https://localhost:21261`). This is not the gRPC server — do not point the test agent at it.
 
 ---
 
