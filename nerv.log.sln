@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "nerv.log.Tests", "nerv.log.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "nerv.log.Agent", "nerv.log.Agent\nerv.log.Agent.csproj", "{620A436E-C83D-4970-BC82-D245C5F58D5A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "nerv.log.Aspire", "nerv.log.Aspire\nerv.log.Aspire.csproj", "{E6968D76-6B46-4EAA-9274-68D0368EE5D6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -29,5 +31,9 @@ Global
 		{620A436E-C83D-4970-BC82-D245C5F58D5A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{620A436E-C83D-4970-BC82-D245C5F58D5A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{620A436E-C83D-4970-BC82-D245C5F58D5A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E6968D76-6B46-4EAA-9274-68D0368EE5D6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E6968D76-6B46-4EAA-9274-68D0368EE5D6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E6968D76-6B46-4EAA-9274-68D0368EE5D6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E6968D76-6B46-4EAA-9274-68D0368EE5D6}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
