@@ -11,15 +11,34 @@ public class LogStorageWorker
         ILogger<LogStorageWorker> logger) : BackgroundService
 {
     private const int BatchSize = 1000;
+    private const int WorkersCount = 4; // temp only
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        logger.LogInformation("worker: Multi-thread saving is available. Workers count: {count}", WorkersCount);
+
+        var workers = new Task[WorkersCount];
+
+        for (int i = 0; i < WorkersCount; i++)
+        {
+            int workerId = i + 1;
+            workers[i] = Task.Run(() => StartWorkerAsync(workerId, cancellationToken: stoppingToken), stoppingToken);
+        }
+
+        await Task.WhenAll(workers);
+        logger.LogInformation("worker: All save threads has been stopped");
+    }
+
+    private async Task StartWorkerAsync(int workerId, CancellationToken cancellationToken)
+    {
+        logger.LogInformation("worker #{id}: ready to work.", workerId);
+
         var reader = channel.Reader;
         var batch = new List<LogEntry>();
 
         try
         {
-            while (await reader.WaitToReadAsync(stoppingToken))
+            while (await reader.WaitToReadAsync(cancellationToken))
             {
                 while (reader.TryRead(out var log))
                 {
@@ -27,25 +46,25 @@ public class LogStorageWorker
 
                     if (batch.Count >= BatchSize)
                     {
-                        await FlushBatchToDatabaseAsync(batch);
+                        await FlushBatchToDatabaseAsync(workerId, batch);
                     }
                 }
 
                 if (batch.Any())
                 {
-                    await FlushBatchToDatabaseAsync(batch);
+                    await FlushBatchToDatabaseAsync(workerId, batch);
                 }
             }
         }
         catch (OperationCanceledException)
         {
-            logger.LogWarning("LogStorageWorker is stopping due to cancellation.");
+            logger.LogWarning("worker #{id}: has been stopped.", workerId);
         }
     }
 
-    private async Task FlushBatchToDatabaseAsync(List<LogEntry> batch)
+    private async Task FlushBatchToDatabaseAsync(int workerId, List<LogEntry> batch)
     {
-        logger.LogInformation("worker: Saving mass package with {Count} logs to database...", batch.Count);
+        logger.LogInformation("worker {id}: Saving package with {Count} logs to database...", workerId, batch.Count);
 
         try
         {
@@ -53,11 +72,11 @@ public class LogStorageWorker
             await context.Logs.AddRangeAsync(batch);
             await context.SaveChangesAsync();
 
-            logger.LogInformation("worker: Package successfully saved.");
+            logger.LogInformation("worker {id}: Package successfully saved.", workerId);
         }
         catch (Exception e)
         {
-            logger.LogError(e, "Critical error occured while trying to save package to database.");
+            logger.LogError(e, "worker #{id}: Error occured while saving to database.", workerId);
         }
         finally
         {
