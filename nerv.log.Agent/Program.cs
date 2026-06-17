@@ -1,11 +1,11 @@
-﻿// See https://aka.ms/new-console-template for more information
+﻿using nerv.log.Agent;
 
-using nerv.log.Agent;
+// Required for gRPC over plain HTTP/2 (h2c) without TLS
+AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
 Console.WriteLine("nerv.log.Server CLI test agent");
 
-// default url address from docker
-string serverAddr = args.Length > 0 ? args[0] : "http://localhost:8080"; 
+string serverAddr = args.Length > 0 ? args[0] : "http://localhost:8080";
 int delayMs = args.Length > 1 && int.TryParse(args[1], out var parsedDelay) ? parsedDelay : 1000;
 
 using var cts = new CancellationTokenSource();
