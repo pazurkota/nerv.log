@@ -1,24 +1,28 @@
 using System.Collections.Concurrent;
-using System.Threading.Channels;
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using RabbitMQ.Client;
 using nerv.log.Database;
 using nerv.log.Model;
 using nerv.log.Services;
+using RabbitMQ.Client.Events;
 
 namespace nerv.log.Workers;
 
 public class LogStorageWorker
-        (Channel<LogEntry> channel, 
+        (IConnection rabbitConnection, 
         IDbContextFactory<AppDbContext> contextFactory,
         ILogger<LogStorageWorker> logger,
         EnvService envService) : BackgroundService
 {
     private readonly ConcurrentDictionary<int, CancellationTokenSource> _activeWorkers = new();
     private int _workerIdCounter = 0;
+    private const string QueueName = "raw-logs";
     
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        logger.LogInformation("worker: Worker scale orchestration available. Min: {min}, Max, {max}",
+        logger.LogInformation("worker: Worker scale orchestration via RabbitMQ available. Min: {min}, Max, {max}",
             envService.MinWorkers, envService.MaxWorkers);
 
         for (int i = 0; i < envService.MinWorkers; i++)
@@ -26,13 +30,23 @@ public class LogStorageWorker
             ScaleUp(cancellationToken: stoppingToken);
         }
 
+        await using var controlChannel = await rabbitConnection.CreateChannelAsync(cancellationToken: stoppingToken);
+        
+
         while (!stoppingToken.IsCancellationRequested)
         {
             await Task.Delay(1000, stoppingToken);
 
-            int currentQueueSize = channel.Reader.Count;
-            int currentWorkerCount = _activeWorkers.Count;
+            var queueDeclareResult = await controlChannel.QueueDeclareAsync(
+                queue: QueueName,
+                durable: true,
+                exclusive: false,
+                autoDelete: false,
+                cancellationToken: stoppingToken);
 
+            uint currentQueueSize = queueDeclareResult.MessageCount;
+            int currentWorkerCount = _activeWorkers.Count;
+            
             if (currentQueueSize > currentWorkerCount * envService.ThresholdByWorker
                 && currentWorkerCount < envService.MaxWorkers)
             {
@@ -73,34 +87,72 @@ public class LogStorageWorker
     
     private async Task StartWorkerAsync(int workerId, CancellationToken cancellationToken)
     {
-        logger.LogInformation("worker #{id}: ready to work.", workerId);
+        logger.LogInformation("worker #{id}: ready to consume from RabbitMQ.", workerId);
 
-        var reader = channel.Reader;
+        IChannel? workerChannel = null;
         var batch = new List<LogEntry>();
 
         try
         {
-            while (await reader.WaitToReadAsync(cancellationToken))
+            workerChannel = await rabbitConnection.CreateChannelAsync(cancellationToken: cancellationToken);
+            await workerChannel.QueueDeclareAsync(
+                queue: QueueName,
+                durable: true,
+                exclusive: false,
+                autoDelete: false,
+                cancellationToken: cancellationToken);
+
+            var deliveryTags = new List<ulong>();
+
+            var consumer = new AsyncEventingBasicConsumer(workerChannel);
+
+            consumer.ReceivedAsync += async (Model, ea) =>
             {
-                while (reader.TryRead(out var log))
+                var body = ea.Body.ToArray();
+                var message = Encoding.UTF8.GetString(body);
+
+                try
                 {
-                    batch.Add(log);
+                    var logEntry = JsonSerializer.Deserialize<LogEntry>(message);
+                    if (logEntry != null)
+                    {
+                        batch.Add(logEntry);
+                        deliveryTags.Add(ea.DeliveryTag);
+                    }
 
                     if (batch.Count >= envService.BatchSize)
                     {
                         await FlushBatchToDatabaseAsync(workerId, batch);
+
+                        var highestTag = deliveryTags.Max();
+                        await workerChannel.BasicAckAsync(
+                            deliveryTag: highestTag,
+                            multiple: true,
+                            cancellationToken: cancellationToken);
+                        deliveryTags.Clear();
                     }
                 }
-
-                if (batch.Any())
+                catch (Exception e)
                 {
-                    await FlushBatchToDatabaseAsync(workerId, batch);
+                    logger.LogError(e, "worker #{Id}: Failed to process incoming message.", workerId);
+                    await workerChannel.BasicNackAsync(
+                        deliveryTag: ea.DeliveryTag,
+                        multiple: false,
+                        requeue: true,
+                        cancellationToken: cancellationToken);
                 }
-            }
+            };
         }
         catch (OperationCanceledException)
         {
-            logger.LogWarning("worker #{id}: has been stopped.", workerId);
+            logger.LogWarning("worker #{Id}: Has been stopped", workerId);
+        }
+        finally
+        {
+            if (workerChannel != null)
+            {
+                await workerChannel.DisposeAsync();
+            }
         }
     }
 
