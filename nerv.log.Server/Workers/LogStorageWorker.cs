@@ -11,7 +11,7 @@ using RabbitMQ.Client.Events;
 namespace nerv.log.Workers;
 
 public class LogStorageWorker
-        (IConnection rabbitConnection, 
+        (IConnection rabbitConnection,
         IDbContextFactory<AppDbContext> contextFactory,
         ILogger<LogStorageWorker> logger,
         EnvService envService) : BackgroundService
@@ -19,7 +19,7 @@ public class LogStorageWorker
     private readonly ConcurrentDictionary<int, CancellationTokenSource> _activeWorkers = new();
     private int _workerIdCounter = 0;
     private const string QueueName = "raw-logs";
-    
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("worker: Worker scale orchestration via RabbitMQ available. Min: {min}, Max, {max}",
@@ -31,7 +31,7 @@ public class LogStorageWorker
         }
 
         await using var controlChannel = await rabbitConnection.CreateChannelAsync(cancellationToken: stoppingToken);
-        
+
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -46,12 +46,12 @@ public class LogStorageWorker
 
             uint currentQueueSize = queueDeclareResult.MessageCount;
             int currentWorkerCount = _activeWorkers.Count;
-            
+
             if (currentQueueSize > currentWorkerCount * envService.ThresholdByWorker
                 && currentWorkerCount < envService.MaxWorkers)
             {
                 ScaleUp(cancellationToken: stoppingToken);
-            } 
+            }
             else if (currentQueueSize < (currentWorkerCount - 1) * envService.ThresholdByWorker
                      && currentWorkerCount > envService.MinWorkers)
             {
@@ -79,18 +79,19 @@ public class LogStorageWorker
         var firstWorker = _activeWorkers.Keys.FirstOrDefault(id => id > envService.MinWorkers);
 
         if (firstWorker == 0 || !_activeWorkers.TryRemove(firstWorker, out var workerCts)) return;
-        
+
         logger.LogWarning("worker: scaling down: Closing worker #{id}", firstWorker);
         workerCts.Cancel();
         workerCts.Dispose();
     }
-    
+
     private async Task StartWorkerAsync(int workerId, CancellationToken cancellationToken)
     {
         logger.LogInformation("worker #{id}: ready to consume from RabbitMQ.", workerId);
 
         IChannel? workerChannel = null;
         var batch = new List<LogEntry>();
+        var deliveryTags = new List<ulong>();
 
         try
         {
@@ -102,11 +103,9 @@ public class LogStorageWorker
                 autoDelete: false,
                 cancellationToken: cancellationToken);
 
-            var deliveryTags = new List<ulong>();
-
             var consumer = new AsyncEventingBasicConsumer(workerChannel);
 
-            consumer.ReceivedAsync += async (Model, ea) =>
+            consumer.ReceivedAsync += async (_, ea) =>
             {
                 var body = ea.Body.ToArray();
                 var message = Encoding.UTF8.GetString(body);
@@ -142,17 +141,33 @@ public class LogStorageWorker
                         cancellationToken: cancellationToken);
                 }
             };
+
+            await workerChannel.BasicConsumeAsync(
+                queue: QueueName,
+                autoAck: false,
+                consumer: consumer,
+                cancellationToken: cancellationToken);
+
+            await Task.Delay(Timeout.Infinite, cancellationToken);
         }
         catch (OperationCanceledException)
         {
             logger.LogWarning("worker #{Id}: Has been stopped", workerId);
+
+            if (batch.Count > 0 && workerChannel != null)
+            {
+                await FlushBatchToDatabaseAsync(workerId, batch);
+                if (deliveryTags.Count > 0)
+                    await workerChannel.BasicAckAsync(
+                        deliveryTag: deliveryTags.Max(),
+                        multiple: true,
+                        cancellationToken: CancellationToken.None);
+            }
         }
         finally
         {
             if (workerChannel != null)
-            {
                 await workerChannel.DisposeAsync();
-            }
         }
     }
 
