@@ -60,7 +60,8 @@ Aspire prints the Dashboard URL on startup (e.g. `https://localhost:17093`). Ope
 
 The gRPC server is available at **`http://localhost:8080`**. Database migrations are applied automatically on first startup.
 
-Aspire automatically generates login credentials for **pgAdmin** and the **RabbitMQ Management UI** on every startup. Find them in the Dashboard under the respective resource's **Environment variables** tab (`PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD` for pgAdmin, `RABBITMQ_DEFAULT_USER` / `RABBITMQ_DEFAULT_PASS` for RabbitMQ).
+> [!IMPORTANT]
+> Aspire automatically generates login credentials for **pgAdmin** and the **RabbitMQ Management UI** on every startup. Find them in the Dashboard under the respective resource's **Environment variables** tab (`PGADMIN_DEFAULT_EMAIL` / `PGADMIN_DEFAULT_PASSWORD` for pgAdmin, `RABBITMQ_DEFAULT_USER` / `RABBITMQ_DEFAULT_PASS` for RabbitMQ).
 
 > [!NOTE] 
 > The Aspire Dashboard also exposes an OTLP telemetry endpoint (e.g. `https://localhost:21261`). This is not the gRPC server — do not point the test agent at it.
