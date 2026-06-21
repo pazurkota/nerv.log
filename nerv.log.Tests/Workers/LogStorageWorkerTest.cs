@@ -1,22 +1,76 @@
-using System.Threading.Channels;
+using System.Text;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using MsLogLevel = Microsoft.Extensions.Logging.LogLevel;
 using nerv.log.Database;
 using nerv.log.Model;
 using nerv.log.Services;
 using nerv.log.Workers;
+using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
 
 namespace nerv.log.Tests.Workers;
 
-public class LogStorageWorkerTest
+public class LogStorageWorkerTest : IDisposable
 {
     private readonly Mock<ILogger<LogStorageWorker>> _mockLogger;
     private readonly Mock<IDbContextFactory<AppDbContext>> _mockContextFactory;
+    private readonly Mock<IConnection> _mockConnection;
+    private readonly Mock<IChannel> _mockChannel;
+    private readonly List<AsyncEventingBasicConsumer> _consumers = [];
 
     public LogStorageWorkerTest()
     {
+        Environment.SetEnvironmentVariable("SCALING_MIN_WORKERS", "1");
+        Environment.SetEnvironmentVariable("SCALING_MAX_WORKERS", "1");
+        Environment.SetEnvironmentVariable("SCALING_BATCH_SIZE", "5");
+
         _mockLogger = new Mock<ILogger<LogStorageWorker>>();
         _mockContextFactory = new Mock<IDbContextFactory<AppDbContext>>();
+        _mockConnection = new Mock<IConnection>();
+        _mockChannel = new Mock<IChannel>();
+
+        _mockConnection
+            .Setup(c => c.CreateChannelAsync(It.IsAny<CreateChannelOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(_mockChannel.Object);
+
+        _mockChannel
+            .Setup(c => c.QueueDeclareAsync(
+                It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<IDictionary<string, object?>>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QueueDeclareOk("raw-logs", 0, 0));
+
+        _mockChannel
+            .Setup(c => c.BasicConsumeAsync(
+                It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<IDictionary<string, object?>>(),
+                It.IsAny<IAsyncBasicConsumer>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<string, bool, string, bool, bool, IDictionary<string, object?>, IAsyncBasicConsumer, CancellationToken>(
+                (_, _, _, _, _, _, consumer, _) => _consumers.Add((AsyncEventingBasicConsumer)consumer))
+            .ReturnsAsync("consumer-tag");
+
+        _mockChannel
+            .Setup(c => c.BasicAckAsync(It.IsAny<ulong>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        _mockChannel
+            .Setup(c => c.BasicNackAsync(It.IsAny<ulong>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(ValueTask.CompletedTask);
+
+        _mockChannel
+            .Setup(c => c.DisposeAsync())
+            .Returns(ValueTask.CompletedTask);
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("SCALING_MIN_WORKERS", null);
+        Environment.SetEnvironmentVariable("SCALING_MAX_WORKERS", null);
+        Environment.SetEnvironmentVariable("SCALING_BATCH_SIZE", null);
     }
 
     private AppDbContext CreateInMemoryContext(string? dbName = null) =>
@@ -24,24 +78,21 @@ public class LogStorageWorkerTest
             .UseInMemoryDatabase(dbName ?? Guid.NewGuid().ToString())
             .Options);
 
-    private LogStorageWorker CreateWorker(Channel<LogEntry> channel) =>
-        new(channel, _mockContextFactory.Object, _mockLogger.Object, new EnvService());
+    private LogStorageWorker CreateWorker() =>
+        new(_mockConnection.Object, _mockContextFactory.Object, _mockLogger.Object, new EnvService());
 
-    private static IEnumerable<LogEntry> CreateLogs(int count) =>
-        Enumerable.Range(1, count)
-            .Select(i => new LogEntry { Message = $"Message {i}", ServiceName = "TestService", Level = "Info" });
+    private static ReadOnlyMemory<byte> Serialize(LogEntry entry) =>
+        Encoding.UTF8.GetBytes(JsonSerializer.Serialize(entry));
 
-    private static async Task WriteAndComplete(Channel<LogEntry> channel, IEnumerable<LogEntry> logs)
+    private static LogEntry MakeLog(string message = "test") =>
+        new() { Message = message, ServiceName = "TestService", Level = "Info" };
+
+    private async Task<AsyncEventingBasicConsumer> WaitForConsumerAsync()
     {
-        foreach (var log in logs)
-            await channel.Writer.WriteAsync(log);
-        channel.Writer.Complete();
+        await WaitUntilAsync(() => Task.FromResult(_consumers.Count > 0));
+        return _consumers.First();
     }
 
-    // Polls condition every 50 ms until it returns true or the timeout expires.
-    // ExecuteAsync runs an orchestration loop that never exits on its own, so tests
-    // cannot await ExecuteTask — they must poll for the expected side effect, then
-    // call StopAsync to shut down cleanly.
     private static async Task WaitUntilAsync(Func<Task<bool>> condition, TimeSpan? timeout = null)
     {
         var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(10));
@@ -54,20 +105,37 @@ public class LogStorageWorkerTest
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithSmallBatch_SavesAllLogsToDatabase()
+    public async Task ExecuteAsync_RegistersConsumerWithCorrectQueue()
     {
-        // Arrange
+        var worker = CreateWorker();
+        await worker.StartAsync(CancellationToken.None);
+        await WaitForConsumerAsync();
+        await worker.StopAsync(CancellationToken.None);
+
+        _mockChannel.Verify(c => c.BasicConsumeAsync(
+            "raw-logs",
+            false,
+            It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<bool>(),
+            It.IsAny<IDictionary<string, object?>>(),
+            It.IsAny<IAsyncBasicConsumer>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenBatchSizeReached_SavesLogsToDatabase()
+    {
         var dbName = Guid.NewGuid().ToString();
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => CreateInMemoryContext(dbName));
 
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        await WriteAndComplete(channel, CreateLogs(5));
-        var worker = CreateWorker(channel);
-
-        // Act
+        var worker = CreateWorker();
         await worker.StartAsync(CancellationToken.None);
+        var consumer = await WaitForConsumerAsync();
+
+        for (ulong i = 1; i <= 5; i++)
+            await consumer.HandleBasicDeliverAsync("tag", i, false, "", "raw-logs", new BasicProperties(), Serialize(MakeLog($"Message {i}")));
+
         await WaitUntilAsync(async () =>
         {
             await using var ctx = CreateInMemoryContext(dbName);
@@ -75,237 +143,127 @@ public class LogStorageWorkerTest
         });
         await worker.StopAsync(CancellationToken.None);
 
-        // Assert
         await using var finalCtx = CreateInMemoryContext(dbName);
         Assert.Equal(5, await finalCtx.Logs.CountAsync());
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithEmptyChannel_NeverFlushesToDatabase()
+    public async Task ExecuteAsync_WhenBatchSizeReached_AcknowledgesWithHighestDeliveryTag()
     {
-        // Arrange
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        channel.Writer.Complete();
-        var worker = CreateWorker(channel);
-
-        // Act — channel is already empty; give workers time to observe it and exit
-        await worker.StartAsync(CancellationToken.None);
-        await WaitUntilAsync(() => Task.FromResult(channel.Reader.Completion.IsCompleted && channel.Reader.Count == 0));
-        await Task.Delay(200);
-        await worker.StopAsync(CancellationToken.None);
-
-        // Assert
-        _mockContextFactory.Verify(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenBatchSizeExceeded_SavesAllLogsToDatabase()
-    {
-        // Arrange
-        var dbName = Guid.NewGuid().ToString();
-        _mockContextFactory
-            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => CreateInMemoryContext(dbName));
-
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        await WriteAndComplete(channel, CreateLogs(1500));
-        var worker = CreateWorker(channel);
-
-        // Act
-        await worker.StartAsync(CancellationToken.None);
-        await WaitUntilAsync(async () =>
-        {
-            await using var ctx = CreateInMemoryContext(dbName);
-            return await ctx.Logs.CountAsync() == 1500;
-        });
-        await worker.StopAsync(CancellationToken.None);
-
-        // Assert
-        await using var finalCtx = CreateInMemoryContext(dbName);
-        Assert.Equal(1500, await finalCtx.Logs.CountAsync());
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WithExactlyBatchSize_SavesAllLogsToDatabase()
-    {
-        // Arrange
-        var dbName = Guid.NewGuid().ToString();
-        _mockContextFactory
-            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => CreateInMemoryContext(dbName));
-
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        await WriteAndComplete(channel, CreateLogs(1000));
-        var worker = CreateWorker(channel);
-
-        // Act
-        await worker.StartAsync(CancellationToken.None);
-        await WaitUntilAsync(async () =>
-        {
-            await using var ctx = CreateInMemoryContext(dbName);
-            return await ctx.Logs.CountAsync() == 1000;
-        });
-        await worker.StopAsync(CancellationToken.None);
-
-        // Assert
-        await using var finalCtx = CreateInMemoryContext(dbName);
-        Assert.Equal(1000, await finalCtx.Logs.CountAsync());
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WithLargeDataset_SavesAllLogsToDatabase()
-    {
-        // Arrange
-        var dbName = Guid.NewGuid().ToString();
-        _mockContextFactory
-            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => CreateInMemoryContext(dbName));
-
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        await WriteAndComplete(channel, CreateLogs(3000));
-        var worker = CreateWorker(channel);
-
-        // Act
-        await worker.StartAsync(CancellationToken.None);
-        await WaitUntilAsync(async () =>
-        {
-            await using var ctx = CreateInMemoryContext(dbName);
-            return await ctx.Logs.CountAsync() == 3000;
-        });
-        await worker.StopAsync(CancellationToken.None);
-
-        // Assert
-        await using var finalCtx = CreateInMemoryContext(dbName);
-        Assert.Equal(3000, await finalCtx.Logs.CountAsync());
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WithCancellation_LogsWarningAndExitsGracefully()
-    {
-        // Arrange
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        var worker = CreateWorker(channel);
-
-        // Act
-        await worker.StartAsync(CancellationToken.None);
-        await worker.StopAsync(CancellationToken.None);
-
-        // Worker threads are started via Task.Run (fire-and-forget), so StopAsync may return
-        // before they finish logging the cancellation warning — wait for the log to appear.
-        await WaitUntilAsync(() => Task.FromResult(
-            _mockLogger.Invocations.Any(i =>
-                i.Arguments.OfType<Microsoft.Extensions.Logging.LogLevel>()
-                    .Any(l => l == Microsoft.Extensions.Logging.LogLevel.Warning)
-                && i.Arguments[2]?.ToString()?.Contains("has been stopped") == true)),
-            TimeSpan.FromSeconds(5));
-
-        // Assert
-        _mockLogger.Verify(
-            x => x.Log(
-                Microsoft.Extensions.Logging.LogLevel.Warning,
-                It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("has been stopped")),
-                It.IsAny<Exception?>(),
-                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.AtLeastOnce);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenDbThrows_LogsErrorAndContinues()
-    {
-        // Arrange
-        _mockContextFactory
-            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("DB connection failed"));
-
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        await WriteAndComplete(channel, CreateLogs(3));
-        var worker = CreateWorker(channel);
-
-        // Act — wait until channel is drained and error handling finishes
-        await worker.StartAsync(CancellationToken.None);
-        await WaitUntilAsync(() => Task.FromResult(channel.Reader.Count == 0));
-        await Task.Delay(200);
-        await worker.StopAsync(CancellationToken.None);
-
-        // Assert
-        _mockLogger.Verify(
-            x => x.Log(
-                Microsoft.Extensions.Logging.LogLevel.Error,
-                It.IsAny<EventId>(),
-                It.IsAny<It.IsAnyType>(),
-                It.IsAny<Exception>(),
-                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.AtLeastOnce);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_WhenFlushing_LogsInformationMessages()
-    {
-        // Arrange
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => CreateInMemoryContext());
 
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        await WriteAndComplete(channel, CreateLogs(3));
-        var worker = CreateWorker(channel);
-
-        // Act — wait until workers have flushed and logged success
+        var worker = CreateWorker();
         await worker.StartAsync(CancellationToken.None);
+        var consumer = await WaitForConsumerAsync();
+
+        for (ulong i = 1; i <= 5; i++)
+            await consumer.HandleBasicDeliverAsync("tag", i, false, "", "raw-logs", new BasicProperties(), Serialize(MakeLog()));
+
         await WaitUntilAsync(() => Task.FromResult(
-            _mockLogger.Invocations.Any(i =>
-                i.Arguments.OfType<Microsoft.Extensions.Logging.LogLevel>()
-                    .Any(l => l == Microsoft.Extensions.Logging.LogLevel.Information)
-                && i.Arguments[2]?.ToString()?.Contains("Package successfully saved") == true)));
+            _mockChannel.Invocations.Any(inv => inv.Method.Name == nameof(IChannel.BasicAckAsync))));
         await worker.StopAsync(CancellationToken.None);
 
-        // Assert
-        _mockLogger.Verify(
-            x => x.Log(
-                Microsoft.Extensions.Logging.LogLevel.Information,
-                It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Saving package with")),
-                It.IsAny<Exception?>(),
-                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.AtLeastOnce);
-
-        _mockLogger.Verify(
-            x => x.Log(
-                Microsoft.Extensions.Logging.LogLevel.Information,
-                It.IsAny<EventId>(),
-                It.Is<It.IsAnyType>((v, _) => v.ToString()!.Contains("Package successfully saved")),
-                It.IsAny<Exception?>(),
-                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
-            Times.AtLeastOnce);
+        _mockChannel.Verify(c => c.BasicAckAsync(5UL, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task ExecuteAsync_WhenDbThrows_BatchIsClearedAndWorkerCompletesGracefully()
+    public async Task ExecuteAsync_WhenStoppedWithPartialBatch_FlushesRemainingLogs()
     {
-        // Arrange
+        var dbName = Guid.NewGuid().ToString();
+        _mockContextFactory
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
+
+        var worker = CreateWorker();
+        await worker.StartAsync(CancellationToken.None);
+        var consumer = await WaitForConsumerAsync();
+
+        for (ulong i = 1; i <= 3; i++)
+            await consumer.HandleBasicDeliverAsync("tag", i, false, "", "raw-logs", new BasicProperties(), Serialize(MakeLog($"Message {i}")));
+
+        await worker.StopAsync(CancellationToken.None);
+
+        // Cleanup runs on Task.Run thread after StopAsync returns
+        await WaitUntilAsync(async () =>
+        {
+            await using var ctx = CreateInMemoryContext(dbName);
+            return await ctx.Logs.CountAsync() == 3;
+        }, TimeSpan.FromSeconds(5));
+
+        await using var finalCtx = CreateInMemoryContext(dbName);
+        Assert.Equal(3, await finalCtx.Logs.CountAsync());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenStoppedWithPartialBatch_AcknowledgesRemainingMessages()
+    {
+        _mockContextFactory
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => CreateInMemoryContext());
+
+        var worker = CreateWorker();
+        await worker.StartAsync(CancellationToken.None);
+        var consumer = await WaitForConsumerAsync();
+
+        for (ulong i = 1; i <= 3; i++)
+            await consumer.HandleBasicDeliverAsync("tag", i, false, "", "raw-logs", new BasicProperties(), Serialize(MakeLog()));
+
+        await worker.StopAsync(CancellationToken.None);
+
+        await WaitUntilAsync(() => Task.FromResult(
+            _mockChannel.Invocations.Any(inv =>
+                inv.Method.Name == nameof(IChannel.BasicAckAsync)
+                && (ulong)inv.Arguments[0] == 3UL)),
+            TimeSpan.FromSeconds(5));
+
+        _mockChannel.Verify(c => c.BasicAckAsync(3UL, true, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenDbThrows_LogsError()
+    {
         _mockContextFactory
             .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("DB unavailable"));
 
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        await WriteAndComplete(channel, CreateLogs(1500));
-        var worker = CreateWorker(channel);
-
-        // Act — wait for channel to drain (workers read, attempted flushes, caught errors)
+        var worker = CreateWorker();
         await worker.StartAsync(CancellationToken.None);
-        await WaitUntilAsync(() => Task.FromResult(channel.Reader.Count == 0));
-        await Task.Delay(200);
+        var consumer = await WaitForConsumerAsync();
+
+        for (ulong i = 1; i <= 5; i++)
+            await consumer.HandleBasicDeliverAsync("tag", i, false, "", "raw-logs", new BasicProperties(), Serialize(MakeLog()));
+
+        await WaitUntilAsync(() => Task.FromResult(
+            _mockLogger.Invocations.Any(inv =>
+                inv.Arguments.OfType<MsLogLevel>().Any(l => l == MsLogLevel.Error))));
         await worker.StopAsync(CancellationToken.None);
 
-        // Assert — errors were logged; worker finished without deadlock
         _mockLogger.Verify(
             x => x.Log(
-                Microsoft.Extensions.Logging.LogLevel.Error,
+                MsLogLevel.Error,
                 It.IsAny<EventId>(),
                 It.IsAny<It.IsAnyType>(),
                 It.IsAny<Exception>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenInvalidJson_NacksMessage()
+    {
+        var worker = CreateWorker();
+        await worker.StartAsync(CancellationToken.None);
+        var consumer = await WaitForConsumerAsync();
+
+        var invalidBody = Encoding.UTF8.GetBytes("{not valid json");
+        await consumer.HandleBasicDeliverAsync("tag", 1UL, false, "", "raw-logs", new BasicProperties(), invalidBody);
+
+        await WaitUntilAsync(() => Task.FromResult(
+            _mockChannel.Invocations.Any(inv => inv.Method.Name == nameof(IChannel.BasicNackAsync))));
+        await worker.StopAsync(CancellationToken.None);
+
+        _mockChannel.Verify(c => c.BasicNackAsync(1UL, false, true, It.IsAny<CancellationToken>()), Times.Once);
     }
 }

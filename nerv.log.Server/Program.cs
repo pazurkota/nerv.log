@@ -1,18 +1,12 @@
-using System.Threading.Channels;
 using Microsoft.EntityFrameworkCore;
 using nerv.log.Database;
-using nerv.log.Model;
 using nerv.log.Services;
 using nerv.log.Workers;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
 builder.Services.AddGrpc();
-builder.Services.AddSingleton(Channel.CreateBounded<LogEntry>(new BoundedChannelOptions(1000)
-{
-    FullMode = BoundedChannelFullMode.Wait
-}));
+builder.AddRabbitMQClient("nerv-log-rabbitmq");
 builder.Services.AddSingleton<EnvService>();
 builder.Services.AddDbContextFactory<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
