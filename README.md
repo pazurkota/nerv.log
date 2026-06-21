@@ -48,7 +48,7 @@ cp .env.example .env   # or create it manually
 
 ## Running with .NET Aspire
 
-.NET Aspire is the recommended way to run the project locally. It orchestrates the server container and PostgreSQL automatically, and provides a Dashboard for observing logs, traces, and resource health.
+.NET Aspire is the recommended way to run the project locally. It orchestrates the server container, PostgreSQL and RabbitMQ automatically, and provides a Dashboard for observing logs, traces, and resource health.
 
 Start the AppHost from the solution root:
 
