@@ -20,5 +20,7 @@ public class CliConfig
             agent.AddCommand<TestAgentCommand>("agent")
                 .WithDescription("Test agent");
         });
+
+        config.SetInterceptor(new CliInterceptor());
     }
 }

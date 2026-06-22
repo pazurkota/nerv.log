@@ -7,7 +7,7 @@ using Spectre.Console.Cli;
 
 namespace nerv.log.Cli.Commands;
 
-public class TestAgentCommand : AsyncCommand<TestAgentSettings>
+public class TestAgentCommand : AsyncCommand<TestAgentSettings>, ISilentCommand
 {
     private readonly LogLevel[] _levels = 
         [LogLevel.Debug, LogLevel.Info, LogLevel.Warning, LogLevel.Error, LogLevel.Critical];
