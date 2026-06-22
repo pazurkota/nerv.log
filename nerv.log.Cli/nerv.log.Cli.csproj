@@ -9,6 +9,11 @@
 
     <ItemGroup>
       <PackageReference Include="Spectre.Console" Version="0.57.0" />
+      <PackageReference Include="Grpc.AspNetCore" Version="2.80.0" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <ProjectReference Include="..\nerv.log.Server\nerv.log.Server.csproj" />
     </ItemGroup>
 
 </Project>
