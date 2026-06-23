@@ -1,12 +1,13 @@
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
-using nerv.log.Services;
+using nerv.log.Cli.Settings;
+using Spectre.Console;
+using Spectre.Console.Cli;
 
-namespace nerv.log.Agent;
+namespace nerv.log.Cli.Commands;
 
-public class TestAgent
-    (string serverAddress, int delayMs, Random random)
+public class TestAgentCommand : AsyncCommand<TestAgentSettings>
 {
     private readonly LogLevel[] _levels = 
         [LogLevel.Debug, LogLevel.Info, LogLevel.Warning, LogLevel.Error, LogLevel.Critical];
@@ -20,18 +21,21 @@ public class TestAgent
         "Cache miss for configuration key",
         "NullReferenceException in TransactionController.cs:42"
     ];
-
-    public async Task StartAsync(CancellationToken cancellationToken)
+    
+    protected override async Task<int> ExecuteAsync
+        (CommandContext context, TestAgentSettings settings, CancellationToken cancellationToken)
     {
-        Console.WriteLine($"agent: Connecting to {serverAddress}...");
+        AnsiConsole.MarkupLine("[DarkOrange3_1]Test Agent:[/] Running agent...");
+        AnsiConsole.MarkupLine($"Target gRPC server: [DarkOliveGreen3_1]{settings.Address}[/]");
 
-        using var channel = GrpcChannel.ForAddress(serverAddress);
+        using var channel = GrpcChannel.ForAddress(settings.Address);
         var client = new LogIngestion.LogIngestionClient(channel);
 
         try
         {
             using var streamingCall = client.StreamLogs();
-            Console.WriteLine($"agent: Connected. Starting steaming data with {delayMs}ms delay.");
+            AnsiConsole.MarkupLine($"[DarkOrange3_1]Test Agent:[/] Connected. " +
+                                   $"Starting steaming data with [DarkOliveGreen3_1]{settings.DelayMs}ms[/] delay.");
 
             try
             {
@@ -40,31 +44,35 @@ public class TestAgent
                     var logRequest = GenerateRandomLog();
 
                     await streamingCall.RequestStream.WriteAsync(logRequest, cancellationToken);
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss zz}] -> " +
-                                      $"{logRequest.Level} | {logRequest.ServiceName} | {logRequest.Message}");
+                    AnsiConsole.MarkupLine($"[Cyan3]({DateTime.Now:HH:mm:ss zz})[/] -> " +
+                                           $"{logRequest.Level} | {logRequest.ServiceName} | {logRequest.Message}");
 
-                    await Task.Delay(delayMs, cancellationToken);
+                    await Task.Delay(settings.DelayMs, cancellationToken);
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
 
             await streamingCall.RequestStream.CompleteAsync();
             var response = await streamingCall.ResponseAsync;
-            Console.WriteLine($"agent: Stream completed. Server processed {response.LogsProcessed} logs.");
+            AnsiConsole.MarkupLine($"agent: Stream completed. Server processed {response.LogsProcessed} logs.");
         }
         catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled ||
                                       cancellationToken.IsCancellationRequested)
         {
-            Console.WriteLine("agent: Stream has been aborted by user.");
+            AnsiConsole.MarkupLine("[DarkOrange3_1]Test Agent:[/] Stream has been aborted by user.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"agent: Critical error occured: {ex.Message}.");
+            AnsiConsole.MarkupLine($"[DarkOrange3_1]Test Agent:[/] Critical error occured: {ex.Message}.");
         }
-    }
 
+        return 0;
+    }
+    
     private LogRequest GenerateRandomLog()
     {
+        Random random = new Random();
+        
         return new LogRequest
         {
             Timestamp = Timestamp.FromDateTime(DateTime.UtcNow),

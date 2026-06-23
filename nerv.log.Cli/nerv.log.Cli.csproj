@@ -8,7 +8,9 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <PackageReference Include="Spectre.Console" Version="0.57.0" />
       <PackageReference Include="Grpc.AspNetCore" Version="2.80.0" />
+      <PackageReference Include="Spectre.Console.Cli" Version="0.55.0" />
     </ItemGroup>
 
     <ItemGroup>

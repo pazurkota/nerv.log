@@ -18,7 +18,7 @@ nerv.log/
 ├── nerv.log.Aspire/     # .NET Aspire AppHost — orchestrates the server container and PostgreSQL
 ├── nerv.log.Server/     # ASP.NET Core gRPC server — receives logs and persists them to PostgreSQL
 │   └── Protos/          # Protobuf service definition (log_service.proto)
-├── nerv.log.Agent/      # CLI test agent — generates and streams random log entries to the server
+├── nerv.log.Cli/        # CLI tool (nerv) — management and testing commands for the pipeline
 └── nerv.log.Tests/      # xUnit unit tests for server services and workers
 ```
 
@@ -68,20 +68,42 @@ The gRPC server is available at **`http://localhost:8080`**. Database migrations
 
 ---
 
-## Running the test agent
+## CLI
 
-The agent connects to the server and streams randomly generated log entries. Run it directly with the .NET CLI:
+`nerv.log.Cli` provides the `nerv` command-line tool. Run it with:
 
 ```bash
-dotnet run --project nerv.log.Agent [server_url] [delay_ms]
+dotnet run --project nerv.log.Cli -- <command> [options]
 ```
 
-Defaults: `server_url = http://localhost:8080`, `delay_ms = 1000`.
+Or build and run the binary directly:
+
+```bash
+dotnet build nerv.log.Cli
+./nerv.log.Cli/bin/Debug/net10.0/nerv <command> [options]
+```
+
+Run `nerv -h` to see all available commands.
+
+### Available commands
+
+#### `nerv agent`
+
+Connects to the gRPC server and streams randomly generated log entries. Useful for load testing and verifying the ingestion pipeline end-to-end.
+
+```bash
+nerv agent [options]
+```
+
+| Option | Description | Default |
+|---|---|---|
+| `-a`, `--address` | URL of the gRPC server | `http://localhost:8080` |
+| `-d`, `--delay` | Delay between log entries (ms) | `1000` |
 
 Example — connect to a local server with 500 ms between entries:
 
 ```bash
-dotnet run --project nerv.log.Agent http://localhost:8080 500
+nerv agent --address http://localhost:8080 --delay 500
 ```
 
 Stop the agent with `Ctrl+C`. It will complete the gRPC stream gracefully before exiting.
