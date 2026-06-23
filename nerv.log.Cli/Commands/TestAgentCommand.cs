@@ -34,7 +34,7 @@ public class TestAgentCommand : AsyncCommand<TestAgentSettings>
         try
         {
             using var streamingCall = client.StreamLogs();
-            AnsiConsole.MarkupLine($"\"[DarkOrange3_1]Test Agent:[/] Connected. " +
+            AnsiConsole.MarkupLine($"[DarkOrange3_1]Test Agent:[/] Connected. " +
                                    $"Starting steaming data with [DarkOliveGreen3_1]{settings.DelayMs}ms[/] delay.");
 
             try
@@ -44,7 +44,7 @@ public class TestAgentCommand : AsyncCommand<TestAgentSettings>
                     var logRequest = GenerateRandomLog();
 
                     await streamingCall.RequestStream.WriteAsync(logRequest, cancellationToken);
-                    AnsiConsole.MarkupLine($"[Cyan3][{DateTime.Now:HH:mm:ss zz}][/] -> " +
+                    AnsiConsole.MarkupLine($"[Cyan3]({DateTime.Now:HH:mm:ss zz})[/] -> " +
                                            $"{logRequest.Level} | {logRequest.ServiceName} | {logRequest.Message}");
 
                     await Task.Delay(settings.DelayMs, cancellationToken);

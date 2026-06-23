@@ -16,11 +16,7 @@ public class CliConfig
         config.PropagateExceptions();
 #endif
 
-        config.AddBranch("agent", agent =>
-        {
-            agent.SetDescription("CLI test agent for gRPC testing");
-            agent.AddCommand<TestAgentCommand>("agent")
-                .WithDescription("Test agent");
-        });
+        config.AddCommand<TestAgentCommand>("agent")
+            .WithDescription("CLI test agent for gRPC testing");
     }
 }
