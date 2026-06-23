@@ -7,8 +7,10 @@ public class CliConfig
 {
     public static void ConfigureCommands(IConfigurator config)
     {
-        config.SetApplicationName("nerv.log");
+        config.SetApplicationName("nerv");
         config.SetApplicationVersion("v0.2");
+        
+        config.SetInterceptor(new CliInterceptor());
 
 #if DEBUG
         config.PropagateExceptions();
@@ -20,7 +22,5 @@ public class CliConfig
             agent.AddCommand<TestAgentCommand>("agent")
                 .WithDescription("Test agent");
         });
-
-        config.SetInterceptor(new CliInterceptor());
     }
 }

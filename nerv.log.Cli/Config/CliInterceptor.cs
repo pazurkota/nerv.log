@@ -11,24 +11,24 @@ public class CliInterceptor : ICommandInterceptor
         {
             return;
         }
-        
-        // @TODO: Fix this
-        if (context.Implementation != null && context.Implementation.Type.IsAssignableTo(typeof(ISilentCommand)))
-        {
-            return;
-        }
-        
+
+        PrintLogo();
+    }
+
+    public static void PrintLogo()
+    {
         string logo = """
-                       ███╗   ██╗███████╗██████╗ ██╗   ██╗  ██╗      ██████╗  ██████╗ 
-                       ████╗  ██║██╔════╝██╔══██╗██║   ██║  ██║     ██╔═══██╗██╔════╝ 
+                       ███╗   ██╗███████╗██████╗ ██╗   ██╗  ██╗      ██████╗  ██████╗
+                       ████╗  ██║██╔════╝██╔══██╗██║   ██║  ██║     ██╔═══██╗██╔════╝
                        ██╔██╗ ██║█████╗  ██████╔╝██║   ██║  ██║     ██║   ██║██║  ███╗
                        ██║╚██╗██║██╔══╝  ██╔══██╗╚██╗ ██╔╝  ██║     ██║   ██║██║   ██║
                        ██║ ╚████║███████╗██║  ██║ ╚████╔╝██╗███████╗╚██████╔╝╚██████╔╝
-                       ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝  ╚═══╝ ╚═╝╚══════╝ ╚═════╝  ╚═════╝ 
+                       ╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝  ╚═══╝ ╚═╝╚══════╝ ╚═════╝  ╚═════╝
                       """;
 
         AnsiConsole.MarkupLine($"[Red3_1]{logo}[/]");
         AnsiConsole.MarkupLine("Welcome to [Maroon]nerv.log v0.2[/] CLI tool!");
+        AnsiConsole.MarkupLine("Type [Maroon]nerv -h[/] for more information.");
         AnsiConsole.WriteLine();
     }
 }
