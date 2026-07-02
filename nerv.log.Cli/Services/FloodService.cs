@@ -4,7 +4,7 @@ using Grpc.Net.Client;
 
 namespace nerv.log.Cli.Services;
 
-public class TestAgentService(string serverAddress, int delayMs, Random random)
+public class FloodService(string serverAddress, int delayMs, Random random)
 {
     private readonly LogLevel[] _levels = 
         [LogLevel.Debug, LogLevel.Info, LogLevel.Warning, LogLevel.Error, LogLevel.Critical];
@@ -21,7 +21,7 @@ public class TestAgentService(string serverAddress, int delayMs, Random random)
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        Console.WriteLine($"agent: Connecting to {serverAddress}...");
+        Console.WriteLine($"flood: Connecting to {serverAddress}...");
 
         using var channel = GrpcChannel.ForAddress(serverAddress);
         var client = new LogIngestion.LogIngestionClient(channel);
@@ -29,7 +29,7 @@ public class TestAgentService(string serverAddress, int delayMs, Random random)
         try
         {
             using var streamingCall = client.StreamLogs();
-            Console.WriteLine($"agent: Connected. Starting steaming data with {delayMs}ms delay.");
+            Console.WriteLine($"flood: Connected. Starting steaming data with {delayMs}ms delay.");
 
             try
             {
@@ -48,16 +48,16 @@ public class TestAgentService(string serverAddress, int delayMs, Random random)
 
             await streamingCall.RequestStream.CompleteAsync();
             var response = await streamingCall.ResponseAsync;
-            Console.WriteLine($"agent: Stream completed. Server processed {response.LogsProcessed} logs.");
+            Console.WriteLine($"flood: Stream completed. Server processed {response.LogsProcessed} logs.");
         }
         catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled ||
                                       cancellationToken.IsCancellationRequested)
         {
-            Console.WriteLine("agent: Stream has been aborted by user.");
+            Console.WriteLine("flood: Stream has been aborted by user.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"agent: Critical error occured: {ex.Message}.");
+            Console.WriteLine($"flood: Critical error occured: {ex.Message}.");
         }
     }
 

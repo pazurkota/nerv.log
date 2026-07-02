@@ -7,7 +7,7 @@ using Spectre.Console.Cli;
 
 namespace nerv.log.Cli.Commands;
 
-public class TestAgentCommand : AsyncCommand<TestAgentSettings>
+public class FloodCommand : AsyncCommand<FloodSettings>
 {
     private readonly LogLevel[] _levels = 
         [LogLevel.Debug, LogLevel.Info, LogLevel.Warning, LogLevel.Error, LogLevel.Critical];
@@ -23,9 +23,9 @@ public class TestAgentCommand : AsyncCommand<TestAgentSettings>
     ];
     
     protected override async Task<int> ExecuteAsync
-        (CommandContext context, TestAgentSettings settings, CancellationToken cancellationToken)
+        (CommandContext context, FloodSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.MarkupLine("[DarkOrange3_1]Test Agent:[/] Running agent...");
+        AnsiConsole.MarkupLine("[DarkOrange3_1]Flood:[/] Running flood...");
         AnsiConsole.MarkupLine($"Target gRPC server: [DarkOliveGreen3_1]{settings.Address}[/]");
 
         using var channel = GrpcChannel.ForAddress(settings.Address);
@@ -34,7 +34,7 @@ public class TestAgentCommand : AsyncCommand<TestAgentSettings>
         try
         {
             using var streamingCall = client.StreamLogs();
-            AnsiConsole.MarkupLine($"[DarkOrange3_1]Test Agent:[/] Connected. " +
+            AnsiConsole.MarkupLine($"[DarkOrange3_1]Flood:[/] Connected. " +
                                    $"Starting steaming data with [DarkOliveGreen3_1]{settings.DelayMs}ms[/] delay.");
 
             try
@@ -54,16 +54,16 @@ public class TestAgentCommand : AsyncCommand<TestAgentSettings>
 
             await streamingCall.RequestStream.CompleteAsync();
             var response = await streamingCall.ResponseAsync;
-            AnsiConsole.MarkupLine($"agent: Stream completed. Server processed {response.LogsProcessed} logs.");
+            AnsiConsole.MarkupLine($"flood: Stream completed. Server processed {response.LogsProcessed} logs.");
         }
         catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled ||
                                       cancellationToken.IsCancellationRequested)
         {
-            AnsiConsole.MarkupLine("[DarkOrange3_1]Test Agent:[/] Stream has been aborted by user.");
+            AnsiConsole.MarkupLine("[DarkOrange3_1]Flood:[/] Stream has been aborted by user.");
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[DarkOrange3_1]Test Agent:[/] Critical error occured: {ex.Message}.");
+            AnsiConsole.MarkupLine($"[DarkOrange3_1]Flood:[/] Critical error occured: {ex.Message}.");
         }
 
         return 0;
