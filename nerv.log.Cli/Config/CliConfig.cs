@@ -18,5 +18,8 @@ public class CliConfig
 
         config.AddCommand<TestAgentCommand>("agent")
             .WithDescription("CLI test agent for gRPC testing");
+
+        config.AddCommand<SpikeCommand>("spike")
+            .WithDescription("Sends bursts of logs in short spikes with rest periods in between");
     }
 }

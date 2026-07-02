@@ -5,10 +5,15 @@ namespace nerv.log.Cli.Settings;
 
 public class SpikeSettings : CommandSettings
 {
+    [CommandOption("--address")]
+    [Description("URL address of a gRPC service")]
+    [DefaultValue("http://localhost:8080")]
+    public string Address { get; set; } = "http://localhost:8080";
+
     [CommandOption("-a|--amount")]
     [Description("Amount of logs sended during spike")]
-    [DefaultValue(50000)]
-    public int LogAmount { get; set; } = 50000;
+    [DefaultValue(20000)]
+    public int LogAmount { get; set; } = 20000;
 
     [CommandOption("-s|--spike")]
     [Description("Spike duration (in seconds)")]
