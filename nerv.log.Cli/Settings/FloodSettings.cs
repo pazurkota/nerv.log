@@ -3,7 +3,7 @@ using Spectre.Console.Cli;
 
 namespace nerv.log.Cli.Settings;
 
-public class TestAgentSettings : CommandSettings
+public class FloodSettings : CommandSettings
 {
     [CommandOption("-a|--address")]
     [Description("URL address of a gRPC service")]

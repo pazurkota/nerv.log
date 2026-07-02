@@ -16,8 +16,8 @@ public class CliConfig
         config.PropagateExceptions();
 #endif
 
-        config.AddCommand<TestAgentCommand>("agent")
-            .WithDescription("CLI test agent for gRPC testing");
+        config.AddCommand<FloodCommand>("flood")
+            .WithDescription("Continuously streams test logs to a gRPC server");
 
         config.AddCommand<SpikeCommand>("spike")
             .WithDescription("Sends bursts of logs in short spikes with rest periods in between");
