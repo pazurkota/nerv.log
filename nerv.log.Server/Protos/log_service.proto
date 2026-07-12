@@ -9,6 +9,10 @@ service LogIngestion {
   rpc StreamLogs(stream LogRequest) returns (IngestionResponse);
 }
 
+service LogAnalytics {
+  rpc GetStats(StatsRequest) returns (StatsResponse);
+}
+
 enum LogLevel {
   LOG_LEVEL_UNSPECIFIED = 0;
   LOG_LEVEL_TRACE = 1;
@@ -37,4 +41,30 @@ message IngestionResponse {
   bool success = 1;
   int64 logs_processed = 2;
   string message = 3;
+}
+
+message StatsRequest {
+  google.protobuf.Timestamp from = 1;
+
+  google.protobuf.Timestamp to = 2;
+
+  // Optional filter; empty string means all services.
+  string service_name = 3;
+}
+
+message LevelCount {
+  string level = 1;
+  int64 count = 2;
+}
+
+message ServiceStats {
+  string service_name = 1;
+  int64 total = 2;
+  int64 errors = 3;
+}
+
+message StatsResponse {
+  int64 total_logs = 1;
+  repeated LevelCount levels = 2;
+  repeated ServiceStats services = 3;
 }

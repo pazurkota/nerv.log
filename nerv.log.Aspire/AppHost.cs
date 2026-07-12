@@ -1,7 +1,6 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
 var postgresServer = builder.AddPostgres("postgres-server")
-    .WithDataVolume()
     .WithPgAdmin();
 
 var postgresDb = postgresServer.AddDatabase("nerv-log-db");
