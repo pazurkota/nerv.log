@@ -213,4 +213,105 @@ public class LogAnalyticsServiceTest
 
         Assert.Equal("Auth.API", Assert.Single(response.Findings).ServiceName);
     }
+
+    private static ErrorSpikeRequest ErrorSpikeRequest
+        (DateTime from, DateTime to, string service = "", int threshold = 3, int bucketSeconds = 60) => new()
+    {
+        From = Timestamp.FromDateTime(from),
+        To = Timestamp.FromDateTime(to),
+        ServiceName = service,
+        Threshold = threshold,
+        BucketSeconds = bucketSeconds
+    };
+
+    [Fact]
+    public async Task GetErrorSpikes_WithEmptyDatabase_ReturnsNoFindings()
+    {
+        var service = CreateService();
+
+        var response = await service.GetErrorSpikes(
+            ErrorSpikeRequest(Now.AddHours(-1), Now), Context());
+
+        Assert.Empty(response.Findings);
+    }
+
+    [Fact]
+    public async Task GetErrorSpikes_DetectsBucketFarAboveBaseline()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddMinutes(-50)),
+            Entry("Auth.API", "Error", Now.AddMinutes(-30)),
+            Entry("Auth.API", "Error", Now.AddSeconds(-40)),
+            Entry("Auth.API", "Error", Now.AddSeconds(-30)),
+            Entry("Auth.API", "Critical", Now.AddSeconds(-20)),
+            Entry("Auth.API", "Error", Now.AddSeconds(-10)));
+        var service = CreateService();
+
+        var response = await service.GetErrorSpikes(
+            ErrorSpikeRequest(Now.AddMinutes(-60), Now, threshold: 3, bucketSeconds: 60), Context());
+
+        var finding = Assert.Single(response.Findings);
+        Assert.Equal("Auth.API", finding.ServiceName);
+        Assert.Equal(4, finding.ErrorCount);
+    }
+
+    [Fact]
+    public async Task GetErrorSpikes_IgnoresEvenlySpreadErrorsWithNoRelativeSpike()
+    {
+        var timestamps = Enumerable.Range(0, 10).Select(i => Now.AddMinutes(-i * 1.0));
+        await SeedAsync(timestamps.Select(t => Entry("Auth.API", "Error", t)).ToArray());
+        var service = CreateService();
+
+        var response = await service.GetErrorSpikes(
+            ErrorSpikeRequest(Now.AddMinutes(-10), Now, threshold: 1, bucketSeconds: 60), Context());
+
+        Assert.Empty(response.Findings);
+    }
+
+    [Fact]
+    public async Task GetErrorSpikes_IgnoresBucketsBelowThreshold()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddSeconds(-40)),
+            Entry("Auth.API", "Error", Now.AddSeconds(-20)));
+        var service = CreateService();
+
+        var response = await service.GetErrorSpikes(
+            ErrorSpikeRequest(Now.AddMinutes(-1), Now, threshold: 5, bucketSeconds: 60), Context());
+
+        Assert.Empty(response.Findings);
+    }
+
+    [Fact]
+    public async Task GetErrorSpikes_IgnoresNonErrorLevels()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Warning", Now.AddSeconds(-30)),
+            Entry("Auth.API", "Info", Now.AddSeconds(-20)),
+            Entry("Auth.API", "Warning", Now.AddSeconds(-10)));
+        var service = CreateService();
+
+        var response = await service.GetErrorSpikes(
+            ErrorSpikeRequest(Now.AddMinutes(-1), Now, threshold: 1, bucketSeconds: 60), Context());
+
+        Assert.Empty(response.Findings);
+    }
+
+    [Fact]
+    public async Task GetErrorSpikes_FiltersByServiceName()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddSeconds(-20)),
+            Entry("Auth.API", "Error", Now.AddSeconds(-10)),
+            Entry("Auth.API", "Error", Now),
+            Entry("Payment.Gateway", "Error", Now.AddSeconds(-20)),
+            Entry("Payment.Gateway", "Error", Now.AddSeconds(-10)),
+            Entry("Payment.Gateway", "Error", Now));
+        var service = CreateService();
+
+        var response = await service.GetErrorSpikes(
+            ErrorSpikeRequest(Now.AddMinutes(-1), Now, service: "Auth.API", threshold: 3), Context());
+
+        Assert.Equal("Auth.API", Assert.Single(response.Findings).ServiceName);
+    }
 }

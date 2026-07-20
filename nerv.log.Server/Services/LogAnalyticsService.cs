@@ -11,6 +11,8 @@ public class LogAnalyticsService(IDbContextFactory<AppDbContext> dbFactory) : Lo
 
     private const int DefaultThreshold = 10;
     private const int DefaultBurstSeconds = 60;
+    private const int DefaultBucketSeconds = 300;
+    private const double SpikeMultiplier = 3.0;
 
     public override async Task<StatsResponse> GetStats(StatsRequest request, ServerCallContext context)
     {
@@ -88,6 +90,76 @@ public class LogAnalyticsService(IDbContextFactory<AppDbContext> dbFactory) : Lo
                     FailureCount = burst.Count,
                     WindowStart = Timestamp.FromDateTime(burst.Start),
                     WindowEnd = Timestamp.FromDateTime(burst.End)
+                });
+            }
+        }
+
+        return response;
+    }
+
+    public override async Task<ErrorSpikeResponse> GetErrorSpikes
+        (ErrorSpikeRequest request, ServerCallContext context)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(context.CancellationToken);
+
+        var from = request.From?.ToDateTime() ?? DateTime.SpecifyKind(DateTime.MinValue, DateTimeKind.Utc);
+        var to = request.To?.ToDateTime() ?? DateTime.UtcNow;
+        var threshold = request.Threshold > 0 ? request.Threshold : DefaultThreshold;
+        var bucketSize = TimeSpan.FromSeconds(
+            request.BucketSeconds > 0 ? request.BucketSeconds : DefaultBucketSeconds);
+
+        var query = db.Logs.AsNoTracking()
+            .Where(l => l.TimeStamp >= from && l.TimeStamp <= to &&
+                        ((IEnumerable<string>)ErrorLevels).Contains(l.Level));
+
+        if (!string.IsNullOrEmpty(request.ServiceName))
+        {
+            query = query.Where(l => l.ServiceName == request.ServiceName);
+        }
+
+        var errors = await query
+            .Select(l => new { l.ServiceName, l.TimeStamp })
+            .ToListAsync(context.CancellationToken);
+
+        var response = new ErrorSpikeResponse();
+        var bucketCount = Math.Max(1, (int)Math.Ceiling((to - from) / bucketSize));
+
+        foreach (var group in errors.GroupBy(e => e.ServiceName))
+        {
+            var buckets = new long[bucketCount];
+            foreach (var error in group)
+            {
+                var index = Math.Clamp((int)((error.TimeStamp - from) / bucketSize), 0, bucketCount - 1);
+                buckets[index]++;
+            }
+
+            var peakIndex = 0;
+            for (var i = 1; i < bucketCount; i++)
+            {
+                if (buckets[i] > buckets[peakIndex])
+                {
+                    peakIndex = i;
+                }
+            }
+
+            var peakCount = buckets[peakIndex];
+            var baseline = bucketCount > 1
+                ? (double)(buckets.Sum() - peakCount) / (bucketCount - 1)
+                : 0.0;
+
+            var isSpike = peakCount >= threshold && (baseline == 0.0 || peakCount >= baseline * SpikeMultiplier);
+
+            if (isSpike)
+            {
+                var bucketStart = from + bucketSize * peakIndex;
+
+                response.Findings.Add(new ErrorSpikeFinding
+                {
+                    ServiceName = group.Key,
+                    ErrorCount = peakCount,
+                    BaselineAverage = baseline,
+                    BucketStart = Timestamp.FromDateTime(bucketStart),
+                    BucketEnd = Timestamp.FromDateTime(bucketStart + bucketSize < to ? bucketStart + bucketSize : to)
                 });
             }
         }

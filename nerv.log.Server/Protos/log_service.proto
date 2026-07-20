@@ -12,6 +12,7 @@ service LogIngestion {
 service LogAnalytics {
   rpc GetStats(StatsRequest) returns (StatsResponse);
   rpc GetBruteForceFindings(BruteForceRequest) returns (BruteForceResponse);
+  rpc GetErrorSpikes(ErrorSpikeRequest) returns (ErrorSpikeResponse);
 }
 
 enum LogLevel {
@@ -94,4 +95,31 @@ message BruteForceFinding {
 
 message BruteForceResponse {
   repeated BruteForceFinding findings = 1;
+}
+
+message ErrorSpikeRequest {
+  google.protobuf.Timestamp from = 1;
+
+  google.protobuf.Timestamp to = 2;
+
+  // Optional filter; empty string means all services.
+  string service_name = 3;
+
+  // Minimum number of errors in a bucket that raises a finding.
+  int32 threshold = 4;
+
+  // Size (in seconds) of each fixed time bucket used to compare error counts.
+  int32 bucket_seconds = 5;
+}
+
+message ErrorSpikeFinding {
+  string service_name = 1;
+  int64 error_count = 2;
+  double baseline_average = 3;
+  google.protobuf.Timestamp bucket_start = 4;
+  google.protobuf.Timestamp bucket_end = 5;
+}
+
+message ErrorSpikeResponse {
+  repeated ErrorSpikeFinding findings = 1;
 }

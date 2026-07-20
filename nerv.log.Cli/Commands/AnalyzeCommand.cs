@@ -15,6 +15,7 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
         ["Trace", "Debug", "Info", "Warning", "Error", "Critical"];
 
     private const int BurstWindowSeconds = 60;
+    private const int BucketWindowSeconds = 300;
 
     protected override async Task<int> ExecuteAsync
         (CommandContext context, AnalyzeSettings settings, CancellationToken cancellationToken)
@@ -51,7 +52,7 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
 
             if (check is "error-spike" or "all")
             {
-                AnsiConsole.MarkupLine("[DarkOrange3_1]Analyze:[/] [yellow]error-spike check is not implemented yet.[/]");
+                await RunErrorSpikeAsync(channel, settings, cancellationToken);
             }
         }
         catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled ||
@@ -173,6 +174,56 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
             table.AddRow(finding.ServiceName, finding.FailureCount.ToString(),
                 finding.WindowStart.ToDateTime().ToLocalTime().ToString("HH:mm:ss"),
                 finding.WindowEnd.ToDateTime().ToLocalTime().ToString("HH:mm:ss"));
+        }
+
+        AnsiConsole.Write(table);
+    }
+
+    private static async Task RunErrorSpikeAsync
+        (GrpcChannel channel, AnalyzeSettings settings, CancellationToken cancellationToken)
+    {
+        var client = new LogAnalytics.LogAnalyticsClient(channel);
+
+        var to = DateTime.UtcNow;
+        var from = to.AddMinutes(-settings.WindowMinutes);
+
+        var request = new ErrorSpikeRequest
+        {
+            From = Timestamp.FromDateTime(from),
+            To = Timestamp.FromDateTime(to),
+            ServiceName = settings.Service ?? string.Empty,
+            Threshold = settings.Threshold,
+            BucketSeconds = BucketWindowSeconds
+        };
+
+        ErrorSpikeResponse result = await AnsiConsole.Status().StartAsync("Scanning for error spikes...",
+            async _ => await client.GetErrorSpikesAsync(request, cancellationToken: cancellationToken));
+
+        if (result.Findings.Count == 0)
+        {
+            AnsiConsole.MarkupLine($"[DarkOrange3_1]Analyze:[/] No error spikes found " +
+                                   $"([DarkOliveGreen3_1]≥{settings.Threshold}[/] errors per " +
+                                   $"[DarkOliveGreen3_1]{BucketWindowSeconds}s[/] bucket).");
+            return;
+        }
+
+        AnsiConsole.MarkupLine($"[DarkOrange3_1]Analyze:[/] [red]Found {result.Findings.Count} error spike(s)[/] " +
+                               $"of [DarkOliveGreen3_1]≥{settings.Threshold}[/] errors per " +
+                               $"[DarkOliveGreen3_1]{BucketWindowSeconds}s[/] bucket.");
+
+        var table = new Table().Title("Error-spike findings");
+        table.AddColumn("Service");
+        table.AddColumn(new TableColumn("Errors").RightAligned());
+        table.AddColumn(new TableColumn("Baseline avg").RightAligned());
+        table.AddColumn("Bucket start");
+        table.AddColumn("Bucket end");
+
+        foreach (var finding in result.Findings.OrderByDescending(f => f.ErrorCount))
+        {
+            table.AddRow(finding.ServiceName, finding.ErrorCount.ToString(),
+                finding.BaselineAverage.ToString("F1"),
+                finding.BucketStart.ToDateTime().ToLocalTime().ToString("HH:mm:ss"),
+                finding.BucketEnd.ToDateTime().ToLocalTime().ToString("HH:mm:ss"));
         }
 
         AnsiConsole.Write(table);
