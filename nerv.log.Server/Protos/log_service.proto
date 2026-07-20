@@ -11,6 +11,7 @@ service LogIngestion {
 
 service LogAnalytics {
   rpc GetStats(StatsRequest) returns (StatsResponse);
+  rpc GetBruteForceFindings(BruteForceRequest) returns (BruteForceResponse);
 }
 
 enum LogLevel {
@@ -67,4 +68,30 @@ message StatsResponse {
   int64 total_logs = 1;
   repeated LevelCount levels = 2;
   repeated ServiceStats services = 3;
+}
+
+message BruteForceRequest {
+  google.protobuf.Timestamp from = 1;
+
+  google.protobuf.Timestamp to = 2;
+
+  // Optional filter; empty string means all services.
+  string service_name = 3;
+
+  // Minimum number of failures within burst_seconds that raises a finding.
+  int32 threshold = 4;
+
+  // Size (in seconds) of the sliding window used to detect a burst of failures.
+  int32 burst_seconds = 5;
+}
+
+message BruteForceFinding {
+  string service_name = 1;
+  int64 failure_count = 2;
+  google.protobuf.Timestamp window_start = 3;
+  google.protobuf.Timestamp window_end = 4;
+}
+
+message BruteForceResponse {
+  repeated BruteForceFinding findings = 1;
 }

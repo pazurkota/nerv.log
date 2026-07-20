@@ -125,4 +125,92 @@ public class LogAnalyticsServiceTest
         Assert.Equal(1, response.TotalLogs);
         Assert.Equal("Auth.API", Assert.Single(response.Services).ServiceName);
     }
+
+    private static BruteForceRequest BruteForceRequest
+        (DateTime from, DateTime to, string service = "", int threshold = 3, int burstSeconds = 60) => new()
+    {
+        From = Timestamp.FromDateTime(from),
+        To = Timestamp.FromDateTime(to),
+        ServiceName = service,
+        Threshold = threshold,
+        BurstSeconds = burstSeconds
+    };
+
+    [Fact]
+    public async Task GetBruteForceFindings_WithEmptyDatabase_ReturnsNoFindings()
+    {
+        var service = CreateService();
+
+        var response = await service.GetBruteForceFindings(
+            BruteForceRequest(Now.AddHours(-1), Now), Context());
+
+        Assert.Empty(response.Findings);
+    }
+
+    [Fact]
+    public async Task GetBruteForceFindings_DetectsBurstOfFailuresAboveThreshold()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddSeconds(-40)),
+            Entry("Auth.API", "Error", Now.AddSeconds(-30)),
+            Entry("Auth.API", "Critical", Now.AddSeconds(-20)),
+            Entry("Auth.API", "Error", Now.AddSeconds(-10)));
+        var service = CreateService();
+
+        var response = await service.GetBruteForceFindings(
+            BruteForceRequest(Now.AddHours(-1), Now, threshold: 3, burstSeconds: 60), Context());
+
+        var finding = Assert.Single(response.Findings);
+        Assert.Equal("Auth.API", finding.ServiceName);
+        Assert.Equal(4, finding.FailureCount);
+    }
+
+    [Fact]
+    public async Task GetBruteForceFindings_IgnoresFailuresSpreadBeyondBurstWindow()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddMinutes(-30)),
+            Entry("Auth.API", "Error", Now.AddMinutes(-20)),
+            Entry("Auth.API", "Error", Now.AddMinutes(-10)),
+            Entry("Auth.API", "Error", Now));
+        var service = CreateService();
+
+        var response = await service.GetBruteForceFindings(
+            BruteForceRequest(Now.AddHours(-1), Now, threshold: 3, burstSeconds: 60), Context());
+
+        Assert.Empty(response.Findings);
+    }
+
+    [Fact]
+    public async Task GetBruteForceFindings_IgnoresNonErrorLevels()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Warning", Now.AddSeconds(-30)),
+            Entry("Auth.API", "Info", Now.AddSeconds(-20)),
+            Entry("Auth.API", "Warning", Now.AddSeconds(-10)));
+        var service = CreateService();
+
+        var response = await service.GetBruteForceFindings(
+            BruteForceRequest(Now.AddHours(-1), Now, threshold: 3, burstSeconds: 60), Context());
+
+        Assert.Empty(response.Findings);
+    }
+
+    [Fact]
+    public async Task GetBruteForceFindings_FiltersByServiceName()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddSeconds(-20)),
+            Entry("Auth.API", "Error", Now.AddSeconds(-10)),
+            Entry("Auth.API", "Error", Now),
+            Entry("Payment.Gateway", "Error", Now.AddSeconds(-20)),
+            Entry("Payment.Gateway", "Error", Now.AddSeconds(-10)),
+            Entry("Payment.Gateway", "Error", Now));
+        var service = CreateService();
+
+        var response = await service.GetBruteForceFindings(
+            BruteForceRequest(Now.AddHours(-1), Now, service: "Auth.API", threshold: 3), Context());
+
+        Assert.Equal("Auth.API", Assert.Single(response.Findings).ServiceName);
+    }
 }

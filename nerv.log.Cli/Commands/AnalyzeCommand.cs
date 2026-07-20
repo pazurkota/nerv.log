@@ -14,6 +14,8 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
     private static readonly string[] LevelOrder =
         ["Trace", "Debug", "Info", "Warning", "Error", "Critical"];
 
+    private const int BurstWindowSeconds = 60;
+
     protected override async Task<int> ExecuteAsync
         (CommandContext context, AnalyzeSettings settings, CancellationToken cancellationToken)
     {
@@ -44,7 +46,7 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
 
             if (check is "brute-force" or "all")
             {
-                AnsiConsole.MarkupLine("[DarkOrange3_1]Analyze:[/] [yellow]brute-force check is not implemented yet.[/]");
+                await RunBruteForceAsync(channel, settings, cancellationToken);
             }
 
             if (check is "error-spike" or "all")
@@ -126,6 +128,54 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
         }
 
         AnsiConsole.Write(serviceTable);
+    }
+
+    private static async Task RunBruteForceAsync
+        (GrpcChannel channel, AnalyzeSettings settings, CancellationToken cancellationToken)
+    {
+        var client = new LogAnalytics.LogAnalyticsClient(channel);
+
+        var to = DateTime.UtcNow;
+        var from = to.AddMinutes(-settings.WindowMinutes);
+
+        var request = new BruteForceRequest
+        {
+            From = Timestamp.FromDateTime(from),
+            To = Timestamp.FromDateTime(to),
+            ServiceName = settings.Service ?? string.Empty,
+            Threshold = settings.Threshold,
+            BurstSeconds = BurstWindowSeconds
+        };
+
+        BruteForceResponse result = await AnsiConsole.Status().StartAsync("Scanning for brute-force bursts...",
+            async _ => await client.GetBruteForceFindingsAsync(request, cancellationToken: cancellationToken));
+
+        if (result.Findings.Count == 0)
+        {
+            AnsiConsole.MarkupLine($"[DarkOrange3_1]Analyze:[/] No brute-force bursts found " +
+                                   $"([DarkOliveGreen3_1]≥{settings.Threshold}[/] failures within " +
+                                   $"[DarkOliveGreen3_1]{BurstWindowSeconds}s[/]).");
+            return;
+        }
+
+        AnsiConsole.MarkupLine($"[DarkOrange3_1]Analyze:[/] [red]Found {result.Findings.Count} suspicious burst(s)[/] " +
+                               $"of [DarkOliveGreen3_1]≥{settings.Threshold}[/] failures within " +
+                               $"[DarkOliveGreen3_1]{BurstWindowSeconds}s[/].");
+
+        var table = new Table().Title("Brute-force findings");
+        table.AddColumn("Service");
+        table.AddColumn(new TableColumn("Failures").RightAligned());
+        table.AddColumn("Window start");
+        table.AddColumn("Window end");
+
+        foreach (var finding in result.Findings.OrderByDescending(f => f.FailureCount))
+        {
+            table.AddRow(finding.ServiceName, finding.FailureCount.ToString(),
+                finding.WindowStart.ToDateTime().ToLocalTime().ToString("HH:mm:ss"),
+                finding.WindowEnd.ToDateTime().ToLocalTime().ToString("HH:mm:ss"));
+        }
+
+        AnsiConsole.Write(table);
     }
 
     private static string Rate(long part, long total) =>
