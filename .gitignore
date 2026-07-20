@@ -6,3 +6,7 @@ riderModule.iml
 
 # enviroment file
 .env
+
+# test coverage output
+coverage.cobertura.xml
+TestResults/
