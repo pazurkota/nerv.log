@@ -129,13 +129,14 @@ message ErrorSpikeResponse {
 }
 
 message VacuumRequest {
-  // If true, runs VACUUM FULL, which reclaims more disk space but takes an
-  // exclusive lock on the table for the duration of the operation.
-  bool full = 1;
+  // Deletes logs older than this many days.
+  int32 older_than_days = 1;
+
+  // If true, Error/Critical logs are kept regardless of age.
+  bool keep_errors = 2;
 }
 
 message VacuumResponse {
-  int64 size_before_bytes = 1;
-  int64 size_after_bytes = 2;
-  double duration_seconds = 3;
+  int64 deleted_count = 1;
+  double duration_seconds = 2;
 }

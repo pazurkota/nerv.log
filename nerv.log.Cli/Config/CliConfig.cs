@@ -30,7 +30,7 @@ public class CliConfig
             db.SetDescription("Database maintenance commands");
 
             db.AddCommand<VacuumCommand>("vacuum")
-                .WithDescription("Runs VACUUM on the log storage to reclaim disk space and refresh planner statistics");
+                .WithDescription("Deletes old logs from storage to keep the database size in check");
         });
     }
 }

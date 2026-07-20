@@ -6,35 +6,28 @@ using Spectre.Console.Cli;
 
 namespace nerv.log.Cli.Commands;
 
-public class VacuumCommand : AsyncCommand<VacuumSettings>
+public class VacuumCommand : AsyncCommand<DbVacuumSettings>
 {
-    private static readonly string[] SizeUnits = ["B", "KB", "MB", "GB", "TB"];
-
     protected override async Task<int> ExecuteAsync
-        (CommandContext context, VacuumSettings settings, CancellationToken cancellationToken)
+        (CommandContext context, DbVacuumSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.MarkupLine("[DarkOrange3_1]Vacuum:[/] Running database vacuum...");
         AnsiConsole.MarkupLine($"Target gRPC server: [DarkOliveGreen3_1]{settings.Address}[/]");
+        AnsiConsole.MarkupLine($"Deleting logs older than [DarkOliveGreen3_1]{settings.OlderThan}d[/]" +
+                               (settings.KeepErrors ? ", keeping Error/Critical logs" : string.Empty) + ".");
 
         using var channel = GrpcChannel.ForAddress(settings.Address);
         var client = new LogMaintenance.LogMaintenanceClient(channel);
 
         try
         {
-            var request = new VacuumRequest { Full = settings.Full };
+            var request = new VacuumRequest { OlderThanDays = settings.OlderThan, KeepErrors = settings.KeepErrors };
 
-            VacuumResponse response = await AnsiConsole.Status().StartAsync(
-                settings.Full ? "Running VACUUM FULL (this may take a while)..." : "Running VACUUM...",
+            VacuumResponse response = await AnsiConsole.Status().StartAsync("Vacuuming logs...",
                 async _ => await client.VacuumAsync(request, cancellationToken: cancellationToken));
 
-            var reclaimed = response.SizeBeforeBytes - response.SizeAfterBytes;
-
-            AnsiConsole.MarkupLine($"[DarkOrange3_1]Vacuum:[/] Done in [DarkOliveGreen3_1]{response.DurationSeconds:F1}s[/]. " +
-                                   $"Size before: [DarkOliveGreen3_1]{FormatBytes(response.SizeBeforeBytes)}[/], " +
-                                   $"after: [DarkOliveGreen3_1]{FormatBytes(response.SizeAfterBytes)}[/]" +
-                                   (reclaimed > 0
-                                       ? $", reclaimed [DarkOliveGreen3_1]{FormatBytes(reclaimed)}[/]."
-                                       : "."));
+            AnsiConsole.MarkupLine($"[DarkOrange3_1]Vacuum:[/] Deleted [DarkOliveGreen3_1]{response.DeletedCount}[/] " +
+                                   $"log(s) in [DarkOliveGreen3_1]{response.DurationSeconds:F1}s[/].");
         }
         catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled ||
                                       cancellationToken.IsCancellationRequested)
@@ -53,18 +46,5 @@ public class VacuumCommand : AsyncCommand<VacuumSettings>
         }
 
         return 0;
-    }
-
-    private static string FormatBytes(long bytes)
-    {
-        double size = bytes;
-        var unit = 0;
-        while (size >= 1024 && unit < SizeUnits.Length - 1)
-        {
-            size /= 1024;
-            unit++;
-        }
-
-        return $"{size:F1}{SizeUnits[unit]}";
     }
 }

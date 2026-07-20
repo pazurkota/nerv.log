@@ -7,31 +7,34 @@ namespace nerv.log.Services;
 
 public class LogMaintenanceService(IDbContextFactory<AppDbContext> dbFactory) : LogMaintenance.LogMaintenanceBase
 {
-    private const string TableName = "Logs";
+    private static readonly string[] ErrorLevels = ["Error", "Critical"];
+
+    private const int DefaultOlderThanDays = 7;
 
     public override async Task<VacuumResponse> Vacuum(VacuumRequest request, ServerCallContext context)
     {
         await using var db = await dbFactory.CreateDbContextAsync(context.CancellationToken);
 
-        var sizeBefore = await GetTableSizeAsync(db, context.CancellationToken);
+        var olderThanDays = request.OlderThanDays > 0 ? request.OlderThanDays : DefaultOlderThanDays;
+        var cutoff = DateTime.UtcNow.AddDays(-olderThanDays);
+
+        var query = db.Logs.Where(l => l.TimeStamp < cutoff);
+
+        if (request.KeepErrors)
+        {
+            query = query.Where(l => !ErrorLevels.Contains(l.Level));
+        }
 
         var stopwatch = Stopwatch.StartNew();
-        var sql = request.Full ? $"VACUUM (FULL, ANALYZE) \"{TableName}\";" : $"VACUUM (ANALYZE) \"{TableName}\";";
-        await db.Database.ExecuteSqlRawAsync(sql, context.CancellationToken);
+        var toDelete = await query.ToListAsync(context.CancellationToken);
+        db.Logs.RemoveRange(toDelete);
+        await db.SaveChangesAsync(context.CancellationToken);
         stopwatch.Stop();
-
-        var sizeAfter = await GetTableSizeAsync(db, context.CancellationToken);
 
         return new VacuumResponse
         {
-            SizeBeforeBytes = sizeBefore,
-            SizeAfterBytes = sizeAfter,
+            DeletedCount = toDelete.Count,
             DurationSeconds = stopwatch.Elapsed.TotalSeconds
         };
     }
-
-    private static async Task<long> GetTableSizeAsync(AppDbContext db, CancellationToken cancellationToken) =>
-        await db.Database
-            .SqlQueryRaw<long>($"SELECT pg_total_relation_size('\"{TableName}\"') AS \"Value\"")
-            .SingleAsync(cancellationToken);
 }
