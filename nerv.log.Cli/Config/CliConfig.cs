@@ -21,5 +21,8 @@ public class CliConfig
 
         config.AddCommand<SpikeCommand>("spike")
             .WithDescription("Sends bursts of logs in short spikes with rest periods in between");
+
+        config.AddCommand<AnalyzeCommand>("analyze")
+            .WithDescription("Analyzes stored logs for statistics and common attack patterns (e.g. brute-force)");
     }
 }
