@@ -54,6 +54,54 @@ Example — burst 50,000 logs over 2 seconds, resting 15 seconds between waves:
 nerv spike --amount 50000 --spike 2 --rest 15
 ```
 
+### `analyze`
+
+Analyzes logs already stored on the server for statistics and common anomalies, over a configurable time window.
+
+```
+nerv analyze [--address <ADDRESS>] [-c|--check <CHECK>] [-s|--service <SERVICE>] [-w|--window <MINUTES>] [-t|--threshold <COUNT>]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--address` | `http://localhost:8080` | URL address of the target gRPC service |
+| `-c`, `--check` | `all` | Analysis to run: `stats`, `brute-force`, `error-spike` or `all` |
+| `-s`, `--service` | *(none)* | Limit the analysis to a single service name |
+| `-w`, `--window` | `60` | Time window to analyze, in minutes counting back from now |
+| `-t`, `--threshold` | `10` | Number of suspicious events within the window that raises a finding |
+
+Available checks:
+
+- **`stats`** — overall log counts per level and per service, with error rates.
+- **`brute-force`** — flags services with a burst of `≥ threshold` failed (Error/Critical) logs within a short sliding window, indicative of brute-force attempts.
+- **`error-spike`** — flags services whose error count in a time bucket both meets `threshold` and significantly exceeds their own baseline error rate, indicative of a sudden spike.
+
+Example — check for brute-force bursts on a single service over the last 24 hours:
+
+```
+nerv analyze --check brute-force --service Auth.API --window 1440 --threshold 5
+```
+
+### `db vacuum`
+
+Deletes old logs from the server's database to keep its size in check.
+
+```
+nerv db vacuum [-a|--address <ADDRESS>] [--older-than <DAYS>] [--keep-errors]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-a`, `--address` | `http://localhost:8080` | URL address of the target gRPC service |
+| `--older-than` | `7` | Deletes logs older than the provided time (in days) |
+| `--keep-errors` | `false` | Keep Error/Critical logs regardless of age |
+
+Example — delete logs older than 30 days, keeping errors for auditing:
+
+```
+nerv db vacuum --older-than 30 --keep-errors
+```
+
 ## Getting help
 
 Every command supports `--help` for a full list of options:
@@ -61,4 +109,6 @@ Every command supports `--help` for a full list of options:
 ```
 nerv flood --help
 nerv spike --help
+nerv analyze --help
+nerv db vacuum --help
 ```

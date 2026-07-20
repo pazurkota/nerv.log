@@ -72,43 +72,8 @@ The gRPC server is available at **`http://localhost:8080`**. Database migrations
 
 `nerv.log.Cli` provides the `nerv` command-line tool. Run it with:
 
-```bash
-dotnet run --project nerv.log.Cli -- <command> [options]
-```
-
-Or build and run the binary directly:
-
-```bash
-dotnet build nerv.log.Cli
-./nerv.log.Cli/bin/Debug/net10.0/nerv <command> [options]
-```
-
-Run `nerv -h` to see all available commands.
-
-### Available commands
-
-#### `nerv agent`
-
-Connects to the gRPC server and streams randomly generated log entries. Useful for load testing and verifying the ingestion pipeline end-to-end.
-
-```bash
-nerv agent [options]
-```
-
-| Option | Description | Default |
-|---|---|---|
-| `-a`, `--address` | URL of the gRPC server | `http://localhost:8080` |
-| `-d`, `--delay` | Delay between log entries (ms) | `1000` |
-
-Example — connect to a local server with 500 ms between entries:
-
-```bash
-nerv agent --address http://localhost:8080 --delay 500
-```
-
-Stop the agent with `Ctrl+C`. It will complete the gRPC stream gracefully before exiting.
-
----
+> [!NOTE]
+> All avaliable commands are [here](nerv.log.Cli/README.md)
 
 ## Running tests
 

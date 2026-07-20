@@ -15,6 +15,10 @@ service LogAnalytics {
   rpc GetErrorSpikes(ErrorSpikeRequest) returns (ErrorSpikeResponse);
 }
 
+service LogMaintenance {
+  rpc Vacuum(VacuumRequest) returns (VacuumResponse);
+}
+
 enum LogLevel {
   LOG_LEVEL_UNSPECIFIED = 0;
   LOG_LEVEL_TRACE = 1;
@@ -122,4 +126,17 @@ message ErrorSpikeFinding {
 
 message ErrorSpikeResponse {
   repeated ErrorSpikeFinding findings = 1;
+}
+
+message VacuumRequest {
+  // Deletes logs older than this many days.
+  int32 older_than_days = 1;
+
+  // If true, Error/Critical logs are kept regardless of age.
+  bool keep_errors = 2;
+}
+
+message VacuumResponse {
+  int64 deleted_count = 1;
+  double duration_seconds = 2;
 }

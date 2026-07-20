@@ -24,5 +24,13 @@ public class CliConfig
 
         config.AddCommand<AnalyzeCommand>("analyze")
             .WithDescription("Analyzes stored logs for statistics and common attack patterns (e.g. brute-force)");
+
+        config.AddBranch<CommandSettings>("db", db =>
+        {
+            db.SetDescription("Database maintenance commands");
+
+            db.AddCommand<VacuumCommand>("vacuum")
+                .WithDescription("Deletes old logs from storage to keep the database size in check");
+        });
     }
 }
