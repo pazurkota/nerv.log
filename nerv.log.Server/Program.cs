@@ -24,6 +24,7 @@ await using (var scope = app.Services.CreateAsyncScope())
 // Configure the HTTP request pipeline.
 app.MapGrpcService<LogIngestionService>();
 app.MapGrpcService<LogAnalyticsService>();
+app.MapGrpcService<LogMaintenanceService>();
 app.MapGet("/",
     () =>
         "Communication with gRPC endpoints must be made through a gRPC client. To learn how to create a client, visit: https://go.microsoft.com/fwlink/?linkid=2086909");

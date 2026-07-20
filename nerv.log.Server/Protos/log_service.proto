@@ -15,6 +15,10 @@ service LogAnalytics {
   rpc GetErrorSpikes(ErrorSpikeRequest) returns (ErrorSpikeResponse);
 }
 
+service LogMaintenance {
+  rpc Vacuum(VacuumRequest) returns (VacuumResponse);
+}
+
 enum LogLevel {
   LOG_LEVEL_UNSPECIFIED = 0;
   LOG_LEVEL_TRACE = 1;
@@ -122,4 +126,16 @@ message ErrorSpikeFinding {
 
 message ErrorSpikeResponse {
   repeated ErrorSpikeFinding findings = 1;
+}
+
+message VacuumRequest {
+  // If true, runs VACUUM FULL, which reclaims more disk space but takes an
+  // exclusive lock on the table for the duration of the operation.
+  bool full = 1;
+}
+
+message VacuumResponse {
+  int64 size_before_bytes = 1;
+  int64 size_after_bytes = 2;
+  double duration_seconds = 3;
 }
