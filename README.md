@@ -54,6 +54,8 @@ Start the AppHost from the solution root:
 
 ```bash
 dotnet run --project nerv.log.Aspire
+# or
+make deploy
 ```
 
 Aspire prints the Dashboard URL on startup (e.g. `https://localhost:17093`). Open it in the browser to monitor running services.
@@ -79,8 +81,22 @@ The gRPC server is available at **`http://localhost:8080`**. Database migrations
 
 ```bash
 dotnet test
+# or
+make test
 ```
 
 Tests use an in-memory EF Core database and Moq — no running database or server is required.
+
+---
+
+## Makefile commands
+
+| Command             | Description                                                                 |
+|----------------------|-------------------------------------------------------------------------|
+| `make deploy`        | Runs the Aspire AppHost (`dotnet run --project nerv.log.Aspire`).        |
+| `make shell`         | Opens an interactive shell for the `aspire` CLI — type subcommands (e.g. `ps`, `logs`) without the leading `aspire`; type `exit` to quit. |
+| `make test`          | Runs the test suite (`dotnet test`).                                    |
+| `make coverage`      | Runs tests with code coverage collection (Cobertura format).             |
+| `make coverage-min`  | Runs tests with coverage and enforces a minimum line coverage threshold (`COVERAGE_MIN`, default `80`). |
 
 ---
