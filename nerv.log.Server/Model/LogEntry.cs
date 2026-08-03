@@ -27,4 +27,7 @@ public class LogEntry
 
     [Column("message")]
     public string Message { get; set; } = string.Empty;
+
+    [Column("metadata")]
+    public string? Metadata { get; set; }
 }

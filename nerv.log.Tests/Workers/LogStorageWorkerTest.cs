@@ -174,6 +174,65 @@ public class LogStorageWorkerTest : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_WhenBatchSizeReached_PreservesMetadataJson()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        _mockContextFactory
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
+
+        var worker = CreateWorker();
+        await worker.StartAsync(CancellationToken.None);
+        var consumer = await WaitForConsumerAsync();
+
+        const string metadataJson = """{"user_id":"abc123","retry_count":3}""";
+
+        for (ulong i = 1; i <= 5; i++)
+        {
+            var log = MakeLog($"Message {i}");
+            log.Metadata = metadataJson;
+            await consumer.HandleBasicDeliverAsync("tag", i, false, "", "raw-logs", new BasicProperties(), Serialize(log));
+        }
+
+        await WaitUntilAsync(async () =>
+        {
+            await using var ctx = CreateInMemoryContext(dbName);
+            return await ctx.Logs.CountAsync() == 5;
+        });
+        await worker.StopAsync(CancellationToken.None);
+
+        await using var finalCtx = CreateInMemoryContext(dbName);
+        Assert.All(await finalCtx.Logs.ToListAsync(), entry => Assert.Equal(metadataJson, entry.Metadata));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenMetadataIsNull_SavesLogWithNullMetadata()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        _mockContextFactory
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
+
+        var worker = CreateWorker();
+        await worker.StartAsync(CancellationToken.None);
+        var consumer = await WaitForConsumerAsync();
+
+        for (ulong i = 1; i <= 5; i++)
+            await consumer.HandleBasicDeliverAsync("tag", i, false, "", "raw-logs", new BasicProperties(),
+                Serialize(MakeLog($"Message {i}")));
+
+        await WaitUntilAsync(async () =>
+        {
+            await using var ctx = CreateInMemoryContext(dbName);
+            return await ctx.Logs.CountAsync() == 5;
+        });
+        await worker.StopAsync(CancellationToken.None);
+
+        await using var finalCtx = CreateInMemoryContext(dbName);
+        Assert.All(await finalCtx.Logs.ToListAsync(), entry => Assert.Null(entry.Metadata));
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WhenBatchSizeReached_AcknowledgesWithHighestDeliveryTag()
     {
         _mockContextFactory

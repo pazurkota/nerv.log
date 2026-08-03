@@ -13,5 +13,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         
         modelBuilder.Entity<LogEntry>()
             .HasIndex(x => new { x.TimeStamp, x.ServiceName });
+
+        modelBuilder.Entity<LogEntry>()
+            .Property(x => x.Metadata)
+            .HasColumnType("jsonb");
     }
 }
