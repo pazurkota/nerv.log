@@ -31,19 +31,27 @@ public class LogAnalyticsServiceTest
         await db.SaveChangesAsync();
     }
 
-    private static LogEntry Entry(string service, string level, DateTime? timestamp = null) => new()
+    private static LogEntry Entry
+        (string service, string level, DateTime? timestamp = null, string environment = "", string? metadata = null) => new()
     {
         TimeStamp = timestamp ?? Now,
         Level = level,
         ServiceName = service,
+        Environment = environment,
+        Metadata = metadata,
         Message = "M"
     };
 
-    private static StatsRequest Request(DateTime from, DateTime to, string service = "") => new()
+    private static StatsRequest Request
+        (DateTime from, DateTime to, string service = "", string environment = "",
+        string metadataKey = "", string metadataValue = "") => new()
     {
         From = Timestamp.FromDateTime(from),
         To = Timestamp.FromDateTime(to),
-        ServiceName = service
+        ServiceName = service,
+        Environment = environment,
+        MetadataKey = metadataKey,
+        MetadataValue = metadataValue
     };
 
     private static ServerCallContext Context() => new Mock<ServerCallContext>().Object;
@@ -126,14 +134,49 @@ public class LogAnalyticsServiceTest
         Assert.Equal("Auth.API", Assert.Single(response.Services).ServiceName);
     }
 
+    [Fact]
+    public async Task GetStats_FiltersByEnvironment()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", environment: "production"),
+            Entry("Auth.API", "Info", environment: "staging"));
+        var service = CreateService();
+
+        var response = await service.GetStats(
+            Request(Now.AddHours(-1), Now, environment: "production"), Context());
+
+        Assert.Equal(1, response.TotalLogs);
+        Assert.Equal("Error", Assert.Single(response.Levels).Level);
+    }
+
+    [Fact]
+    public async Task GetStats_FiltersByMetadata()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", metadata: """{"user_id":"abc123"}"""),
+            Entry("Auth.API", "Info", metadata: """{"user_id":"other"}"""),
+            Entry("Auth.API", "Warning"));
+        var service = CreateService();
+
+        var response = await service.GetStats(
+            Request(Now.AddHours(-1), Now, metadataKey: "user_id", metadataValue: "abc123"), Context());
+
+        Assert.Equal(1, response.TotalLogs);
+        Assert.Equal("Error", Assert.Single(response.Levels).Level);
+    }
+
     private static BruteForceRequest BruteForceRequest
-        (DateTime from, DateTime to, string service = "", int threshold = 3, int burstSeconds = 60) => new()
+        (DateTime from, DateTime to, string service = "", int threshold = 3, int burstSeconds = 60,
+        string environment = "", string metadataKey = "", string metadataValue = "") => new()
     {
         From = Timestamp.FromDateTime(from),
         To = Timestamp.FromDateTime(to),
         ServiceName = service,
         Threshold = threshold,
-        BurstSeconds = burstSeconds
+        BurstSeconds = burstSeconds,
+        Environment = environment,
+        MetadataKey = metadataKey,
+        MetadataValue = metadataValue
     };
 
     [Fact]
@@ -214,14 +257,52 @@ public class LogAnalyticsServiceTest
         Assert.Equal("Auth.API", Assert.Single(response.Findings).ServiceName);
     }
 
+    [Fact]
+    public async Task GetBruteForceFindings_FiltersByEnvironment()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddSeconds(-20), environment: "production"),
+            Entry("Auth.API", "Error", Now.AddSeconds(-10), environment: "production"),
+            Entry("Auth.API", "Error", Now, environment: "production"),
+            Entry("Auth.API", "Error", Now.AddSeconds(-15), environment: "staging"),
+            Entry("Auth.API", "Error", Now.AddSeconds(-5), environment: "staging"));
+        var service = CreateService();
+
+        var response = await service.GetBruteForceFindings(
+            BruteForceRequest(Now.AddHours(-1), Now, environment: "production", threshold: 3), Context());
+
+        Assert.Equal(3, Assert.Single(response.Findings).FailureCount);
+    }
+
+    [Fact]
+    public async Task GetBruteForceFindings_FiltersByMetadata()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddSeconds(-20), metadata: """{"attack":"true"}"""),
+            Entry("Auth.API", "Error", Now.AddSeconds(-10), metadata: """{"attack":"true"}"""),
+            Entry("Auth.API", "Error", Now, metadata: """{"attack":"true"}"""),
+            Entry("Auth.API", "Error", Now.AddSeconds(-15), metadata: """{"attack":"false"}"""));
+        var service = CreateService();
+
+        var response = await service.GetBruteForceFindings(
+            BruteForceRequest(Now.AddHours(-1), Now, metadataKey: "attack", metadataValue: "true", threshold: 3),
+            Context());
+
+        Assert.Equal(3, Assert.Single(response.Findings).FailureCount);
+    }
+
     private static ErrorSpikeRequest ErrorSpikeRequest
-        (DateTime from, DateTime to, string service = "", int threshold = 3, int bucketSeconds = 60) => new()
+        (DateTime from, DateTime to, string service = "", int threshold = 3, int bucketSeconds = 60,
+        string environment = "", string metadataKey = "", string metadataValue = "") => new()
     {
         From = Timestamp.FromDateTime(from),
         To = Timestamp.FromDateTime(to),
         ServiceName = service,
         Threshold = threshold,
-        BucketSeconds = bucketSeconds
+        BucketSeconds = bucketSeconds,
+        Environment = environment,
+        MetadataKey = metadataKey,
+        MetadataValue = metadataValue
     };
 
     [Fact]
@@ -313,5 +394,38 @@ public class LogAnalyticsServiceTest
             ErrorSpikeRequest(Now.AddMinutes(-1), Now, service: "Auth.API", threshold: 3), Context());
 
         Assert.Equal("Auth.API", Assert.Single(response.Findings).ServiceName);
+    }
+
+    [Fact]
+    public async Task GetErrorSpikes_FiltersByEnvironment()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddSeconds(-20), environment: "production"),
+            Entry("Auth.API", "Error", Now.AddSeconds(-10), environment: "production"),
+            Entry("Auth.API", "Error", Now, environment: "production"),
+            Entry("Auth.API", "Error", Now.AddSeconds(-15), environment: "staging"));
+        var service = CreateService();
+
+        var response = await service.GetErrorSpikes(
+            ErrorSpikeRequest(Now.AddMinutes(-1), Now, environment: "production", threshold: 3), Context());
+
+        Assert.Equal(3, Assert.Single(response.Findings).ErrorCount);
+    }
+
+    [Fact]
+    public async Task GetErrorSpikes_FiltersByMetadata()
+    {
+        await SeedAsync(
+            Entry("Auth.API", "Error", Now.AddSeconds(-20), metadata: """{"region":"eu"}"""),
+            Entry("Auth.API", "Error", Now.AddSeconds(-10), metadata: """{"region":"eu"}"""),
+            Entry("Auth.API", "Error", Now, metadata: """{"region":"eu"}"""),
+            Entry("Auth.API", "Error", Now.AddSeconds(-15), metadata: """{"region":"us"}"""));
+        var service = CreateService();
+
+        var response = await service.GetErrorSpikes(
+            ErrorSpikeRequest(Now.AddMinutes(-1), Now, metadataKey: "region", metadataValue: "eu", threshold: 3),
+            Context());
+
+        Assert.Equal(3, Assert.Single(response.Findings).ErrorCount);
     }
 }

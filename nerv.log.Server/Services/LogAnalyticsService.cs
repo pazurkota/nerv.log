@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Microsoft.EntityFrameworkCore;
@@ -29,21 +30,35 @@ public class LogAnalyticsService(IDbContextFactory<AppDbContext> dbFactory) : Lo
             query = query.Where(l => l.ServiceName == request.ServiceName);
         }
 
-        var levels = await query
-            .GroupBy(l => l.Level)
-            .Select(g => new LevelCount { Level = g.Key, Count = g.LongCount() })
+        if (!string.IsNullOrEmpty(request.Environment))
+        {
+            query = query.Where(l => l.Environment == request.Environment);
+        }
+
+        var rows = await query
+            .Select(l => new { l.Level, l.ServiceName, l.Metadata })
             .ToListAsync(context.CancellationToken);
 
-        var services = await query
-            .GroupBy(l => l.ServiceName)
+        if (!string.IsNullOrEmpty(request.MetadataKey))
+        {
+            rows = rows.Where(r => MatchesMetadata(r.Metadata, request.MetadataKey, request.MetadataValue)).ToList();
+        }
+
+        var levels = rows
+            .GroupBy(r => r.Level)
+            .Select(g => new LevelCount { Level = g.Key, Count = g.LongCount() })
+            .ToList();
+
+        var services = rows
+            .GroupBy(r => r.ServiceName)
             .Select(g => new ServiceStats
             {
                 ServiceName = g.Key,
                 Total = g.LongCount(),
-                Errors = g.LongCount(l => ErrorLevels.Contains(l.Level))
+                Errors = g.LongCount(r => ErrorLevels.Contains(r.Level))
             })
             .OrderByDescending(s => s.Total)
-            .ToListAsync(context.CancellationToken);
+            .ToList();
 
         var response = new StatsResponse { TotalLogs = levels.Sum(l => l.Count) };
         response.Levels.AddRange(levels);
@@ -62,7 +77,7 @@ public class LogAnalyticsService(IDbContextFactory<AppDbContext> dbFactory) : Lo
         var burstWindow = TimeSpan.FromSeconds(request.BurstSeconds > 0 ? request.BurstSeconds : DefaultBurstSeconds);
 
         var query = db.Logs.AsNoTracking()
-            .Where(l => l.TimeStamp >= from && l.TimeStamp <= to && 
+            .Where(l => l.TimeStamp >= from && l.TimeStamp <= to &&
                         ((IEnumerable<string>)ErrorLevels).Contains(l.Level));
 
         if (!string.IsNullOrEmpty(request.ServiceName))
@@ -70,10 +85,22 @@ public class LogAnalyticsService(IDbContextFactory<AppDbContext> dbFactory) : Lo
             query = query.Where(l => l.ServiceName == request.ServiceName);
         }
 
-        var failures = await query
+        if (!string.IsNullOrEmpty(request.Environment))
+        {
+            query = query.Where(l => l.Environment == request.Environment);
+        }
+
+        var rows = await query
             .OrderBy(l => l.TimeStamp)
-            .Select(l => new { l.ServiceName, l.TimeStamp })
+            .Select(l => new { l.ServiceName, l.TimeStamp, l.Metadata })
             .ToListAsync(context.CancellationToken);
+
+        if (!string.IsNullOrEmpty(request.MetadataKey))
+        {
+            rows = rows.Where(r => MatchesMetadata(r.Metadata, request.MetadataKey, request.MetadataValue)).ToList();
+        }
+
+        var failures = rows.Select(r => new { r.ServiceName, r.TimeStamp }).ToList();
 
         var response = new BruteForceResponse();
 
@@ -117,9 +144,21 @@ public class LogAnalyticsService(IDbContextFactory<AppDbContext> dbFactory) : Lo
             query = query.Where(l => l.ServiceName == request.ServiceName);
         }
 
-        var errors = await query
-            .Select(l => new { l.ServiceName, l.TimeStamp })
+        if (!string.IsNullOrEmpty(request.Environment))
+        {
+            query = query.Where(l => l.Environment == request.Environment);
+        }
+
+        var rows = await query
+            .Select(l => new { l.ServiceName, l.TimeStamp, l.Metadata })
             .ToListAsync(context.CancellationToken);
+
+        if (!string.IsNullOrEmpty(request.MetadataKey))
+        {
+            rows = rows.Where(r => MatchesMetadata(r.Metadata, request.MetadataKey, request.MetadataValue)).ToList();
+        }
+
+        var errors = rows.Select(r => new { r.ServiceName, r.TimeStamp }).ToList();
 
         var response = new ErrorSpikeResponse();
         var bucketCount = Math.Max(1, (int)Math.Ceiling((to - from) / bucketSize));
@@ -188,5 +227,34 @@ public class LogAnalyticsService(IDbContextFactory<AppDbContext> dbFactory) : Lo
         }
 
         return best;
+    }
+
+    private static bool MatchesMetadata(string? metadataJson, string key, string value)
+    {
+        if (string.IsNullOrEmpty(metadataJson)) return false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(metadataJson);
+
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty(key, out var property))
+            {
+                return false;
+            }
+
+            return property.ValueKind switch
+            {
+                JsonValueKind.String => property.GetString() == value,
+                JsonValueKind.Number => property.GetRawText() == value,
+                JsonValueKind.True => bool.TryParse(value, out var b) && b,
+                JsonValueKind.False => bool.TryParse(value, out var b) && !b,
+                _ => false
+            };
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 }
