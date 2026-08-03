@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using nerv.log.Model;
 using RabbitMQ.Client;
@@ -7,7 +8,8 @@ using RabbitMQ.Client;
 namespace nerv.log.Services;
 
 public class LogIngestionService
-    (IConnection rabbitConnection, ILogger<LogIngestionService> logger) : LogIngestion.LogIngestionBase
+    (IConnection rabbitConnection, ILogger<LogIngestionService> logger, LogBroadcaster broadcaster)
+    : LogIngestion.LogIngestionBase
 {
     private const string QueueName = "raw-logs";
     
@@ -32,10 +34,11 @@ public class LogIngestionService
         while (await requestStream.MoveNext(context.CancellationToken))
         {
             var grpcRequest = requestStream.Current;
+            var timestamp = grpcRequest.Timestamp ?? Timestamp.FromDateTime(DateTime.UtcNow);
 
             var dbEntry = new LogEntry
             {
-                TimeStamp = grpcRequest.Timestamp?.ToDateTime() ?? DateTime.UtcNow,
+                TimeStamp = timestamp.ToDateTime(),
                 Level = grpcRequest.Level.ToString(),
                 ServiceName = grpcRequest.ServiceName,
                 Message = grpcRequest.Message
@@ -51,6 +54,16 @@ public class LogIngestionService
                 basicProperties: properties,
                 body: body,
                 cancellationToken: context.CancellationToken);
+
+            broadcaster.Publish(new LogRequest
+            {
+                Timestamp = timestamp,
+                Level = grpcRequest.Level,
+                ServiceName = grpcRequest.ServiceName,
+                Message = grpcRequest.Message,
+                Environment = grpcRequest.Environment,
+                Metadata = grpcRequest.Metadata
+            });
 
             processedCount++;
         }

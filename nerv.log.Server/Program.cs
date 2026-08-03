@@ -8,6 +8,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddGrpc();
 builder.AddRabbitMQClient("nerv-log-rabbitmq");
 builder.Services.AddSingleton<EnvService>();
+builder.Services.AddSingleton<LogBroadcaster>();
 builder.Services.AddDbContextFactory<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 builder.Services.AddHostedService<LogStorageWorker>();
@@ -25,6 +26,7 @@ await using (var scope = app.Services.CreateAsyncScope())
 app.MapGrpcService<LogIngestionService>();
 app.MapGrpcService<LogAnalyticsService>();
 app.MapGrpcService<LogMaintenanceService>();
+app.MapGrpcService<LogTailService>();
 app.MapGet("/",
     () =>
         "Communication with gRPC endpoints must be made through a gRPC client. To learn how to create a client, visit: https://go.microsoft.com/fwlink/?linkid=2086909");

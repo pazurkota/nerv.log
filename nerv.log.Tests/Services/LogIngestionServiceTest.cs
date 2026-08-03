@@ -14,6 +14,7 @@ public class LogIngestionServiceTest
     private readonly Mock<IConnection> _mockConnection;
     private readonly Mock<IChannel> _mockRabbitChannel;
     private readonly Mock<ILogger<LogIngestionService>> _mockLogger;
+    private readonly LogBroadcaster _broadcaster = new();
     private readonly List<(string Exchange, string RoutingKey, byte[] Body)> _published = [];
 
     public LogIngestionServiceTest()
@@ -48,7 +49,8 @@ public class LogIngestionServiceTest
             .Returns(ValueTask.CompletedTask);
     }
 
-    private LogIngestionService CreateService() => new(_mockConnection.Object, _mockLogger.Object);
+    private LogIngestionService CreateService() =>
+        new(_mockConnection.Object, _mockLogger.Object, _broadcaster);
 
     private static Mock<ServerCallContext> CreateMockContext()
     {
@@ -240,5 +242,63 @@ public class LogIngestionServiceTest
                 It.IsAny<Exception?>(),
                 It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task StreamLogs_PublishesReceivedLogsToBroadcaster()
+    {
+        var service = CreateService();
+        var reader = _broadcaster.Subscribe(out _);
+
+        var logs = new List<LogRequest>
+        {
+            new()
+            {
+                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow), Level = LogLevel.Error,
+                ServiceName = "MyService", Environment = "production", Message = "Boom"
+            }
+        };
+
+        await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+
+        Assert.True(reader.TryRead(out var broadcast));
+        Assert.Equal("MyService", broadcast.ServiceName);
+        Assert.Equal("production", broadcast.Environment);
+        Assert.Equal("Boom", broadcast.Message);
+        Assert.Equal(LogLevel.Error, broadcast.Level);
+    }
+
+    [Fact]
+    public async Task StreamLogs_WithNullTimestamp_BroadcastsCurrentUtcTime()
+    {
+        var service = CreateService();
+        var reader = _broadcaster.Subscribe(out _);
+        var before = DateTime.UtcNow;
+
+        var logs = new List<LogRequest>
+        {
+            new() { Timestamp = null, Level = LogLevel.Info, ServiceName = "S", Message = "M" }
+        };
+
+        await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+        var after = DateTime.UtcNow;
+
+        Assert.True(reader.TryRead(out var broadcast));
+        var broadcastTime = broadcast.Timestamp.ToDateTime();
+        Assert.True(broadcastTime >= before && broadcastTime <= after);
+    }
+
+    [Fact]
+    public async Task StreamLogs_WithNoSubscribers_DoesNotThrow()
+    {
+        var service = CreateService();
+        var logs = new List<LogRequest>
+        {
+            new() { Timestamp = Timestamp.FromDateTime(DateTime.UtcNow), Level = LogLevel.Info, ServiceName = "S", Message = "M" }
+        };
+
+        var response = await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+
+        Assert.True(response.Success);
     }
 }
