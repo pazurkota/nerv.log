@@ -85,7 +85,7 @@ public class LogStorageWorkerTest : IDisposable
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(entry));
 
     private static LogEntry MakeLog(string message = "test") =>
-        new() { Message = message, ServiceName = "TestService", Level = "Info" };
+        new() { Message = message, ServiceName = "TestService", Environment = "production", Level = "Info" };
 
     private async Task<AsyncEventingBasicConsumer> WaitForConsumerAsync()
     {
@@ -145,6 +145,32 @@ public class LogStorageWorkerTest : IDisposable
 
         await using var finalCtx = CreateInMemoryContext(dbName);
         Assert.Equal(5, await finalCtx.Logs.CountAsync());
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WhenBatchSizeReached_PreservesEnvironment()
+    {
+        var dbName = Guid.NewGuid().ToString();
+        _mockContextFactory
+            .Setup(f => f.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => CreateInMemoryContext(dbName));
+
+        var worker = CreateWorker();
+        await worker.StartAsync(CancellationToken.None);
+        var consumer = await WaitForConsumerAsync();
+
+        for (ulong i = 1; i <= 5; i++)
+            await consumer.HandleBasicDeliverAsync("tag", i, false, "", "raw-logs", new BasicProperties(), Serialize(MakeLog($"Message {i}")));
+
+        await WaitUntilAsync(async () =>
+        {
+            await using var ctx = CreateInMemoryContext(dbName);
+            return await ctx.Logs.CountAsync() == 5;
+        });
+        await worker.StopAsync(CancellationToken.None);
+
+        await using var finalCtx = CreateInMemoryContext(dbName);
+        Assert.All(await finalCtx.Logs.ToListAsync(), entry => Assert.Equal("production", entry.Environment));
     }
 
     [Fact]

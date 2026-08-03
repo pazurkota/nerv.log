@@ -38,6 +38,7 @@ public class LogIngestionService
                 TimeStamp = grpcRequest.Timestamp?.ToDateTime() ?? DateTime.UtcNow,
                 Level = grpcRequest.Level.ToString(),
                 ServiceName = grpcRequest.ServiceName,
+                Environment = grpcRequest.Environment,
                 Message = grpcRequest.Message
             };
 

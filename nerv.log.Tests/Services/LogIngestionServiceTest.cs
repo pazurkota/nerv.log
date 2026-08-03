@@ -170,6 +170,48 @@ public class LogIngestionServiceTest
     }
 
     [Fact]
+    public async Task StreamLogs_PublishesCorrectEnvironment()
+    {
+        var service = CreateService();
+        var logs = new List<LogRequest>
+        {
+            new()
+            {
+                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow), Level = LogLevel.Info,
+                ServiceName = "MyService", Environment = "production", Message = "Message"
+            }
+        };
+
+        await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+
+        Assert.Single(_published);
+        var entry = JsonSerializer.Deserialize<LogEntry>(_published[0].Body);
+        Assert.NotNull(entry);
+        Assert.Equal("production", entry.Environment);
+    }
+
+    [Fact]
+    public async Task StreamLogs_WithEmptyEnvironment_DefaultsToEmptyString()
+    {
+        var service = CreateService();
+        var logs = new List<LogRequest>
+        {
+            new()
+            {
+                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow), Level = LogLevel.Info,
+                ServiceName = "MyService", Message = "Message"
+            }
+        };
+
+        await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+
+        Assert.Single(_published);
+        var entry = JsonSerializer.Deserialize<LogEntry>(_published[0].Body);
+        Assert.NotNull(entry);
+        Assert.Equal(string.Empty, entry.Environment);
+    }
+
+    [Fact]
     public async Task StreamLogs_WithMultipleLogs_PublishesAllMessages()
     {
         var service = CreateService();
