@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Google.Protobuf.WellKnownTypes;
+using Google.Protobuf;
 using Grpc.Core;
 using nerv.log.Model;
 using RabbitMQ.Client;
@@ -41,7 +42,11 @@ public class LogIngestionService
                 TimeStamp = timestamp.ToDateTime(),
                 Level = grpcRequest.Level.ToString(),
                 ServiceName = grpcRequest.ServiceName,
-                Message = grpcRequest.Message
+                Environment = grpcRequest.Environment,
+                Message = grpcRequest.Message,
+                Metadata = grpcRequest.Metadata is not null
+                    ? JsonFormatter.Default.Format(grpcRequest.Metadata)
+                    : null
             };
 
             var payload = JsonSerializer.Serialize(dbEntry);

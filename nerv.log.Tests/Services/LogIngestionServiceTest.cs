@@ -172,6 +172,127 @@ public class LogIngestionServiceTest
     }
 
     [Fact]
+    public async Task StreamLogs_PublishesCorrectEnvironment()
+    {
+        var service = CreateService();
+        var logs = new List<LogRequest>
+        {
+            new()
+            {
+                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow), Level = LogLevel.Info,
+                ServiceName = "MyService", Environment = "production", Message = "Message"
+            }
+        };
+
+        await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+
+        Assert.Single(_published);
+        var entry = JsonSerializer.Deserialize<LogEntry>(_published[0].Body);
+        Assert.NotNull(entry);
+        Assert.Equal("production", entry.Environment);
+    }
+
+    [Fact]
+    public async Task StreamLogs_WithEmptyEnvironment_DefaultsToEmptyString()
+    {
+        var service = CreateService();
+        var logs = new List<LogRequest>
+        {
+            new()
+            {
+                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow), Level = LogLevel.Info,
+                ServiceName = "MyService", Message = "Message"
+            }
+        };
+
+        await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+
+        Assert.Single(_published);
+        var entry = JsonSerializer.Deserialize<LogEntry>(_published[0].Body);
+        Assert.NotNull(entry);
+        Assert.Equal(string.Empty, entry.Environment);
+    }
+
+    [Fact]
+    public async Task StreamLogs_WithMetadata_SerializesStructAsJson()
+    {
+        var service = CreateService();
+        var metadata = new Struct();
+        metadata.Fields.Add("user_id", Value.ForString("abc123"));
+        metadata.Fields.Add("retry_count", Value.ForNumber(3));
+        metadata.Fields.Add("is_authenticated", Value.ForBool(true));
+
+        var logs = new List<LogRequest>
+        {
+            new()
+            {
+                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow), Level = LogLevel.Info,
+                ServiceName = "MyService", Message = "Message", Metadata = metadata
+            }
+        };
+
+        await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+
+        Assert.Single(_published);
+        var entry = JsonSerializer.Deserialize<LogEntry>(_published[0].Body);
+        Assert.NotNull(entry);
+        Assert.NotNull(entry.Metadata);
+
+        using var storedJson = JsonDocument.Parse(entry.Metadata);
+        Assert.Equal("abc123", storedJson.RootElement.GetProperty("user_id").GetString());
+        Assert.Equal(3, storedJson.RootElement.GetProperty("retry_count").GetDouble());
+        Assert.True(storedJson.RootElement.GetProperty("is_authenticated").GetBoolean());
+    }
+
+    [Fact]
+    public async Task StreamLogs_WithNestedMetadata_PreservesStructure()
+    {
+        var service = CreateService();
+        var nested = new Struct();
+        nested.Fields.Add("code", Value.ForNumber(500));
+        var metadata = new Struct();
+        metadata.Fields.Add("error", Value.ForStruct(nested));
+
+        var logs = new List<LogRequest>
+        {
+            new()
+            {
+                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow), Level = LogLevel.Error,
+                ServiceName = "MyService", Message = "Message", Metadata = metadata
+            }
+        };
+
+        await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+
+        var entry = JsonSerializer.Deserialize<LogEntry>(_published[0].Body);
+        Assert.NotNull(entry?.Metadata);
+
+        using var storedJson = JsonDocument.Parse(entry.Metadata);
+        Assert.Equal(500, storedJson.RootElement.GetProperty("error").GetProperty("code").GetDouble());
+    }
+
+    [Fact]
+    public async Task StreamLogs_WithoutMetadata_LeavesMetadataNull()
+    {
+        var service = CreateService();
+        var logs = new List<LogRequest>
+        {
+            new()
+            {
+                Timestamp = Timestamp.FromDateTime(DateTime.UtcNow), Level = LogLevel.Info,
+                ServiceName = "MyService", Message = "Message"
+            }
+        };
+
+        await service.StreamLogs(CreateStreamReader(logs).Object, CreateMockContext().Object);
+
+        Assert.Single(_published);
+        var entry = JsonSerializer.Deserialize<LogEntry>(_published[0].Body);
+        Assert.NotNull(entry);
+        Assert.Null(entry.Metadata);
+    }
+
+    [Fact]
     public async Task StreamLogs_WithMultipleLogs_PublishesAllMessages()
     {
         var service = CreateService();

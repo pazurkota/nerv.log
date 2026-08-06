@@ -19,6 +19,14 @@ public class AnalyzeSettings : CommandSettings
     [Description("Limit the analysis to a single service name")]
     public string? Service { get; set; }
 
+    [CommandOption("-e|--environment")]
+    [Description("Limit the analysis to a single environment")]
+    public string? Environment { get; set; }
+
+    [CommandOption("-m|--metadata")]
+    [Description("Limit the analysis to logs whose metadata contains this key=value pair")]
+    public string? Metadata { get; set; }
+
     [CommandOption("-w|--window")]
     [Description("Time window to analyze (in minutes, counting back from now)")]
     [DefaultValue(60)]
