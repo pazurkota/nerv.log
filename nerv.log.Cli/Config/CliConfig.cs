@@ -25,6 +25,9 @@ public class CliConfig
         config.AddCommand<AnalyzeCommand>("analyze")
             .WithDescription("Analyzes stored logs for statistics and common attack patterns (e.g. brute-force)");
 
+        config.AddCommand<TailCommand>("tail")
+            .WithDescription("Streams raw logs from the server in real time");
+
         config.AddBranch<CommandSettings>("db", db =>
         {
             db.SetDescription("Database maintenance commands");
