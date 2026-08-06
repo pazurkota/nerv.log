@@ -56,6 +56,15 @@ message StatsRequest {
 
   // Optional filter; empty string means all services.
   string service_name = 3;
+
+  // Optional filter; empty string means all environments.
+  string environment = 4;
+
+  // Optional filter; empty string means no metadata filter. Combined with metadata_value.
+  string metadata_key = 5;
+
+  // Value to match against metadata_key. Ignored when metadata_key is empty.
+  string metadata_value = 6;
 }
 
 message LevelCount {
@@ -88,6 +97,15 @@ message BruteForceRequest {
 
   // Size (in seconds) of the sliding window used to detect a burst of failures.
   int32 burst_seconds = 5;
+
+  // Optional filter; empty string means all environments.
+  string environment = 6;
+
+  // Optional filter; empty string means no metadata filter. Combined with metadata_value.
+  string metadata_key = 7;
+
+  // Value to match against metadata_key. Ignored when metadata_key is empty.
+  string metadata_value = 8;
 }
 
 message BruteForceFinding {
@@ -114,6 +132,15 @@ message ErrorSpikeRequest {
 
   // Size (in seconds) of each fixed time bucket used to compare error counts.
   int32 bucket_seconds = 5;
+
+  // Optional filter; empty string means all environments.
+  string environment = 6;
+
+  // Optional filter; empty string means no metadata filter. Combined with metadata_value.
+  string metadata_key = 7;
+
+  // Value to match against metadata_key. Ignored when metadata_key is empty.
+  string metadata_value = 8;
 }
 
 message ErrorSpikeFinding {

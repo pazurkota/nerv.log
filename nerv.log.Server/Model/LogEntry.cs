@@ -21,6 +21,13 @@ public class LogEntry
     [StringLength(255)]
     public string ServiceName { get; set; } = string.Empty;
 
+    [Column("environment")]
+    [StringLength(100)]
+    public string Environment { get; set; } = string.Empty;
+
     [Column("message")]
     public string Message { get; set; } = string.Empty;
+
+    [Column("metadata")]
+    public string? Metadata { get; set; }
 }

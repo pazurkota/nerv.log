@@ -28,13 +28,26 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
             return 1;
         }
 
+        if (!TryParseMetadata(settings.Metadata, out var metadataKey, out var metadataValue))
+        {
+            AnsiConsole.MarkupLine($"[DarkOrange3_1]Analyze:[/] [red]Invalid --metadata value " +
+                                   $"'{settings.Metadata}'.[/] Expected format: key=value.");
+            return 1;
+        }
+
         AnsiConsole.MarkupLine("[DarkOrange3_1]Analyze:[/] Running log analysis...");
         AnsiConsole.MarkupLine($"Target gRPC server: [DarkOliveGreen3_1]{settings.Address}[/]");
         AnsiConsole.MarkupLine($"Check: [DarkOliveGreen3_1]{check}[/], window: " +
                                $"[DarkOliveGreen3_1]{settings.WindowMinutes}min[/]" +
                                (settings.Service is null
                                    ? string.Empty
-                                   : $", service: [DarkOliveGreen3_1]{settings.Service}[/]"));
+                                   : $", service: [DarkOliveGreen3_1]{settings.Service}[/]") +
+                               (settings.Environment is null
+                                   ? string.Empty
+                                   : $", environment: [DarkOliveGreen3_1]{settings.Environment}[/]") +
+                               (metadataKey is null
+                                   ? string.Empty
+                                   : $", metadata: [DarkOliveGreen3_1]{metadataKey}={metadataValue}[/]"));
 
         using var channel = GrpcChannel.ForAddress(settings.Address);
 
@@ -42,17 +55,17 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
         {
             if (check is "stats" or "all")
             {
-                await RunStatsAsync(channel, settings, cancellationToken);
+                await RunStatsAsync(channel, settings, metadataKey, metadataValue, cancellationToken);
             }
 
             if (check is "brute-force" or "all")
             {
-                await RunBruteForceAsync(channel, settings, cancellationToken);
+                await RunBruteForceAsync(channel, settings, metadataKey, metadataValue, cancellationToken);
             }
 
             if (check is "error-spike" or "all")
             {
-                await RunErrorSpikeAsync(channel, settings, cancellationToken);
+                await RunErrorSpikeAsync(channel, settings, metadataKey, metadataValue, cancellationToken);
             }
         }
         catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled ||
@@ -75,7 +88,8 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
     }
 
     private static async Task RunStatsAsync
-        (GrpcChannel channel, AnalyzeSettings settings, CancellationToken cancellationToken)
+        (GrpcChannel channel, AnalyzeSettings settings, string? metadataKey, string? metadataValue,
+        CancellationToken cancellationToken)
     {
         var client = new LogAnalytics.LogAnalyticsClient(channel);
 
@@ -86,7 +100,10 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
         {
             From = Timestamp.FromDateTime(from),
             To = Timestamp.FromDateTime(to),
-            ServiceName = settings.Service ?? string.Empty
+            ServiceName = settings.Service ?? string.Empty,
+            Environment = settings.Environment ?? string.Empty,
+            MetadataKey = metadataKey ?? string.Empty,
+            MetadataValue = metadataValue ?? string.Empty
         };
 
         StatsResponse stats = await AnsiConsole.Status().StartAsync("Fetching statistics...",
@@ -132,7 +149,8 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
     }
 
     private static async Task RunBruteForceAsync
-        (GrpcChannel channel, AnalyzeSettings settings, CancellationToken cancellationToken)
+        (GrpcChannel channel, AnalyzeSettings settings, string? metadataKey, string? metadataValue,
+        CancellationToken cancellationToken)
     {
         var client = new LogAnalytics.LogAnalyticsClient(channel);
 
@@ -145,7 +163,10 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
             To = Timestamp.FromDateTime(to),
             ServiceName = settings.Service ?? string.Empty,
             Threshold = settings.Threshold,
-            BurstSeconds = BurstWindowSeconds
+            BurstSeconds = BurstWindowSeconds,
+            Environment = settings.Environment ?? string.Empty,
+            MetadataKey = metadataKey ?? string.Empty,
+            MetadataValue = metadataValue ?? string.Empty
         };
 
         BruteForceResponse result = await AnsiConsole.Status().StartAsync("Scanning for brute-force bursts...",
@@ -180,7 +201,8 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
     }
 
     private static async Task RunErrorSpikeAsync
-        (GrpcChannel channel, AnalyzeSettings settings, CancellationToken cancellationToken)
+        (GrpcChannel channel, AnalyzeSettings settings, string? metadataKey, string? metadataValue,
+        CancellationToken cancellationToken)
     {
         var client = new LogAnalytics.LogAnalyticsClient(channel);
 
@@ -193,7 +215,10 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
             To = Timestamp.FromDateTime(to),
             ServiceName = settings.Service ?? string.Empty,
             Threshold = settings.Threshold,
-            BucketSeconds = BucketWindowSeconds
+            BucketSeconds = BucketWindowSeconds,
+            Environment = settings.Environment ?? string.Empty,
+            MetadataKey = metadataKey ?? string.Empty,
+            MetadataValue = metadataValue ?? string.Empty
         };
 
         ErrorSpikeResponse result = await AnsiConsole.Status().StartAsync("Scanning for error spikes...",
@@ -227,6 +252,21 @@ public class AnalyzeCommand : AsyncCommand<AnalyzeSettings>
         }
 
         AnsiConsole.Write(table);
+    }
+
+    private static bool TryParseMetadata(string? raw, out string? key, out string? value)
+    {
+        key = null;
+        value = null;
+
+        if (string.IsNullOrEmpty(raw)) return true;
+
+        var separatorIndex = raw.IndexOf('=');
+        if (separatorIndex <= 0) return false;
+
+        key = raw[..separatorIndex];
+        value = raw[(separatorIndex + 1)..];
+        return true;
     }
 
     private static string Rate(long part, long total) =>
